@@ -3,6 +3,19 @@
 
 The source code for Multi-User-Distributed-Text-Editor. It is a text editor that allows several users to collaborate together in reading, and modifying documents together in a real-time environment. Basically, it is a Google documents clone. The project was made for Distributed Systems (CSE354) course.
 
+## 🏗️ Architecture
+
+This project is structured as a **microservices architecture** with the following components:
+
+- **Frontend**: React.js client application
+- **API Gateway**: Request routing and authentication
+- **Auth Service**: User authentication and authorization
+- **Document Service**: Document CRUD operations
+- **Collaboration Service**: Real-time WebSocket communication
+- **Infrastructure**: PostgreSQL database and Redis for pub/sub
+
+For detailed information about the microservices architecture, see [`services/README.md`](services/README.md).
+
 ## Stack used
 
 | Tech     | Usage                                                                                                                                                                            |

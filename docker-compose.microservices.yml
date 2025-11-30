@@ -1,0 +1,158 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  postgres:
+    image: postgres:15-alpine
+    container_name: texteditor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql
+    networks:
+      - texteditor-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: texteditor-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - texteditor-network
+
+  # Microservices
+  api-gateway:
+    build: ./services/api-gateway
+    container_name: texteditor-api-gateway
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - DOCUMENT_SERVICE_URL=http://document-service:3002
+      - COLLABORATION_SERVICE_URL=http://collaboration-service:3003
+    depends_on:
+      - auth-service
+      - document-service
+      - collaboration-service
+    networks:
+      - texteditor-network
+
+  auth-service:
+    command: sh -c "npx prisma migrate deploy && npm start"
+    build: ./services/auth-service
+    container_name: texteditor-auth-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:mypassword@postgres:5432/postgres?schema=auth
+      - JWT_SECRET=your-super-secret-jwt-key
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - texteditor-network
+
+  document-service:
+    command: sh -c "npx prisma migrate deploy && npm start"
+    build: ./services/document-service
+    container_name: texteditor-document-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:mypassword@postgres:5432/postgres?schema=documents
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - texteditor-network
+
+
+  collaboration-service:
+    build: ./services/collaboration-service
+    container_name: texteditor-collaboration-service
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:mypassword@postgres:5432/postgres?schema=collaboration
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - texteditor-network
+
+  # Frontend (React)
+  client:
+    build: ./client
+    container_name: texteditor-client
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:4000
+      - REACT_APP_COLLABORATION_URL=http://localhost:3003
+    depends_on:
+      - api-gateway
+      - collaboration-service
+    networks:
+      - texteditor-network
+
+  # Management Tools
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: texteditor-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@texteditor.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - texteditor-network
+    profiles:
+      - tools
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: texteditor-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - texteditor-network
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  texteditor-network:
+    driver: bridge

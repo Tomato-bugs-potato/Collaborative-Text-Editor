@@ -1,0 +1,36 @@
+// Document Service Schema - Document management and collaboration
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schema   = "documents"
+}
+
+model Document {
+  id           String   @id @db.VarChar(255)
+  title        String   @default("Untitled Document") @db.VarChar(500)
+  data         Json?    // Rich text content
+  ownerId      Int      // Reference to auth service user
+  dateCreated  DateTime @default(now()) @db.Timestamp(6)
+  lastModified DateTime @default(now()) @updatedAt @db.Timestamp(6)
+  collaborators Collaborator[]
+
+  @@map("documents")
+}
+
+model Collaborator {
+  id         Int      @id @default(autoincrement())
+  documentId String
+  userId     Int      // Reference to auth service user
+  role       String   @default("editor") // "viewer", "editor", "owner"
+  joinedAt   DateTime @default(now()) @db.Timestamp(6)
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([userId])
+  @@map("collaborators")
+}

@@ -1,0 +1,51 @@
+// Collaboration Service Schema - Real-time collaboration data
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schema   = "collaboration"
+}
+
+model CollaborationSession {
+  id         String   @id @default(cuid())
+  documentId String   @db.VarChar(255)
+  userId     Int      // Reference to auth service user
+  socketId   String   @unique @db.VarChar(255)
+  joinedAt   DateTime @default(now()) @db.Timestamp(6)
+  lastSeen   DateTime @default(now()) @updatedAt @db.Timestamp(6)
+  status     String   @default("active") // "active", "idle", "disconnected"
+
+  @@index([documentId])
+  @@index([userId])
+  @@index([socketId])
+  @@map("collaboration_sessions")
+}
+
+model OperationalTransform {
+  id          String   @id @default(cuid())
+  documentId  String   @db.VarChar(255)
+  userId      Int
+  operation   Json     // The OT operation data
+  version     Int      // Operation version for conflict resolution
+  timestamp   DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([documentId])
+  @@index([version])
+  @@map("operational_transforms")
+}
+
+model CursorPosition {
+  id         String   @id @default(cuid())
+  documentId String   @db.VarChar(255)
+  userId     Int
+  position   Int      // Cursor position in document
+  selection  Json?    // Selection range if any
+  updatedAt  DateTime @default(now()) @updatedAt @db.Timestamp(6)
+
+  @@index([documentId])
+  @@unique([documentId, userId])
+  @@map("cursor_positions")
+}
