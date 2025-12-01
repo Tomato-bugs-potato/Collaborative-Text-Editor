@@ -54,6 +54,29 @@ const isValidJWT = (token) => {
   return parts.length === 3;
 };
 
+// Service-to-service communication utility
+const serviceRequest = async (serviceUrl, method = 'GET', data = null, headers = {}) => {
+  const requestOptions = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers
+    }
+  };
+
+  if (data) {
+    requestOptions.body = JSON.stringify(data);
+  }
+
+  const response = await fetch(serviceUrl, requestOptions);
+
+  if (!response.ok) {
+    throw new Error(`Service request failed: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
 module.exports = {
   generateId,
   isValidDocumentId,
@@ -61,5 +84,6 @@ module.exports = {
   createResponse,
   createErrorResponse,
   asyncHandler,
-  isValidJWT
+  isValidJWT,
+  serviceRequest
 };

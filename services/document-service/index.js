@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
-const { createResponse, createErrorResponse, asyncHandler, generateId } = require('../shared/utils');
+const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('./shared/utils');
 
 const prisma = new PrismaClient({
   log: ['error', 'warn'],
@@ -54,11 +54,7 @@ app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
       ]
     },
     include: {
-      collaborators: {
-        include: {
-          user: true // This will need to be fetched from auth service
-        }
-      }
+      collaborators: true
     },
     orderBy: {
       lastModified: 'desc'
@@ -87,11 +83,7 @@ app.get('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
       ]
     },
     include: {
-      collaborators: {
-        include: {
-          user: true // This will need to be fetched from auth service
-        }
-      }
+      collaborators: true
     }
   });
 
@@ -157,11 +149,7 @@ app.put('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
       lastModified: new Date()
     },
     include: {
-      collaborators: {
-        include: {
-          user: true
-        }
-      }
+      collaborators: true
     }
   });
 
@@ -181,4 +169,115 @@ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) =>
   });
 
   if (!existingDocument) {
-  
+    return res.status(404).json(createErrorResponse('Document not found or not authorized to delete', 404));
+  }
+
+  // Delete document (cascade will delete collaborators)
+  await prisma.document.delete({
+    where: { id }
+  });
+
+  res.json(createResponse(true, null, 'Document deleted successfully'));
+}));
+
+// Add collaborator to document
+app.post('/documents/:id/collaborators', authenticateToken, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { userId, role = 'editor' } = req.body;
+
+  if (!userId) {
+    return res.status(400).json(createErrorResponse('User ID is required', 400));
+  }
+
+  // Check if document exists and user is owner
+  const document = await prisma.document.findFirst({
+    where: {
+      id,
+      ownerId: req.user.userId
+    }
+  });
+
+  if (!document) {
+    return res.status(404).json(createErrorResponse('Document not found or not authorized', 404));
+  }
+
+  // Validate that the user to be added exists (service-to-service call)
+  try {
+    const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+    await serviceRequest(`${authServiceUrl}/health`); // Basic connectivity check
+
+    // In a real implementation, you'd call an endpoint like /api/auth/users/:userId
+    // For now, we'll assume the user exists if the ID is provided
+  } catch (error) {
+    console.error('Auth service communication error:', error);
+    return res.status(500).json(createErrorResponse('Unable to validate user', 500));
+  }
+
+  // Check if user is already a collaborator
+  const existingCollaborator = await prisma.collaborator.findUnique({
+    where: {
+      documentId_userId: {
+        documentId: id,
+        userId: parseInt(userId)
+      }
+    }
+  });
+
+  if (existingCollaborator) {
+    return res.status(409).json(createErrorResponse('User is already a collaborator', 409));
+  }
+
+  // Add collaborator
+  const collaborator = await prisma.collaborator.create({
+    data: {
+      documentId: id,
+      userId: parseInt(userId),
+      role
+    }
+  });
+
+  res.status(201).json(createResponse(true, collaborator, 'Collaborator added successfully'));
+}));
+
+// Remove collaborator from document
+app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandler(async (req, res) => {
+  const { id, userId } = req.params;
+
+  // Check if document exists and user is owner
+  const document = await prisma.document.findFirst({
+    where: {
+      id,
+      ownerId: req.user.userId
+    }
+  });
+
+  if (!document) {
+    return res.status(404).json(createErrorResponse('Document not found or not authorized', 404));
+  }
+
+  // Remove collaborator
+  await prisma.collaborator.delete({
+    where: {
+      documentId_userId: {
+        documentId: id,
+        userId: parseInt(userId)
+      }
+    }
+  });
+
+  res.json(createResponse(true, null, 'Collaborator removed successfully'));
+}));
+
+// Start server
+app.listen(PORT, async () => {
+  try {
+    await prisma.$connect();
+    console.log(`Document service running on port ${PORT}`);
+    console.log('Connected to database successfully');
+  } catch (error) {
+    console.error('Failed to connect to database:', error);
+    process.exit(1);
+  }
+});
+
+module.exports = app;

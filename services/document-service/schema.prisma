@@ -6,7 +6,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schema   = "documents"
 }
 
 model Document {
@@ -30,6 +29,7 @@ model Collaborator {
 
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@unique([documentId, userId]) // Ensure one collaborator per document per user
   @@index([documentId])
   @@index([userId])
   @@map("collaborators")

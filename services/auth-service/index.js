@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const { PrismaClient } = require('@prisma/client');
-const { createResponse, createErrorResponse, asyncHandler } = require('../shared/utils');
+const { createResponse, createErrorResponse, asyncHandler } = require('./shared/utils');
 
 const prisma = new PrismaClient({
   log: ['error', 'warn'],
@@ -138,6 +138,59 @@ app.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
   }
 
   res.json(createResponse(true, user, 'Profile retrieved successfully'));
+}));
+
+// Search users by email or name
+app.get('/users/search', authenticateToken, asyncHandler(async (req, res) => {
+  const { q } = req.query;
+
+  if (!q || q.trim().length < 2) {
+    return res.status(400).json(createErrorResponse('Search query must be at least 2 characters', 400));
+  }
+
+  const users = await prisma.user.findMany({
+    where: {
+      AND: [
+        { id: { not: req.user.userId } }, // Exclude current user
+        {
+          OR: [
+            { email: { contains: q, mode: 'insensitive' } },
+            { name: { contains: q, mode: 'insensitive' } }
+          ]
+        }
+      ]
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true
+    },
+    take: 10, // Limit results
+    orderBy: { name: 'asc' }
+  });
+
+  res.json(createResponse(true, users, 'Users found'));
+}));
+
+// Get user by ID
+app.get('/users/:id', authenticateToken, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await prisma.user.findUnique({
+    where: { id: parseInt(id) },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      createdAt: true
+    }
+  });
+
+  if (!user) {
+    return res.status(404).json(createErrorResponse('User not found', 404));
+  }
+
+  res.json(createResponse(true, user, 'User found'));
 }));
 
 // Start server

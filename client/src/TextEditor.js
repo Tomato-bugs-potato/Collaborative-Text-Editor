@@ -12,78 +12,222 @@ export default function TextEditor() {
   const { id: id_doc } = useParams()
   const [newsocket, setSocket] = useState()
   const [quill, setQuill] = useState()
+  const [version, setVersion] = useState(1)
 
   console.log(id_doc)
 
 
   //UseEffect1
   useEffect(() => {
-    //Setting a random name for the socket user connected
-    const r = Math.floor(Math.random() * 10) + 1
-    const s_socket = io(process.env.REACT_APP_SERVER_URL, { query: { username: `shehab ${r}` } })
-    setSocket(s_socket)
+    // Get JWT token from localStorage (assuming user is logged in)
+    const token = localStorage.getItem('authToken');
+
+    if (!token) {
+      console.error('No authentication token found. Please log in first.');
+      return;
+    }
+
+    // Connect to collaboration service through API Gateway
+    const s_socket = io(process.env.REACT_APP_COLLABORATION_URL || 'http://localhost:4000', {
+      auth: {
+        token: token
+      }
+    });
+
+    setSocket(s_socket);
 
     return () => {
-      s_socket.disconnect()
-    }
+      s_socket.disconnect();
+    };
 
   }, [])
 
 
-  //UseEffect2
+  //UseEffect2: Handle incoming changes from other users
   useEffect(() => {
-    if (newsocket == null || quill == null) return    //check to make sure we have a socket adn a quill
+    if (newsocket == null || quill == null) return;
 
-    const socket_handler = delta => {
-      quill.updateContents(delta)
-    }
-    newsocket.on("receive-changes", socket_handler)
+    const handleReceiveChanges = (data) => {
+      quill.updateContents(data.operation);
+    };
+
+    newsocket.on("receive-changes", handleReceiveChanges);
 
     return () => {
-      newsocket.off("receive-changes ", socket_handler)
-    }
-  }, [newsocket, quill])
+      newsocket.off("receive-changes", handleReceiveChanges);
+    };
+  }, [newsocket, quill]);
 
-
-  //UseEffect3
+  //UseEffect3: Send local changes to other users
   useEffect(() => {
-    if (newsocket == null || quill == null) return
+    if (newsocket == null || quill == null) return;
 
-    const socket_handler = (delta, oldDelta, source) => {
-      if (source !== "user") return
-      newsocket.emit("send-changes", delta)
-    }
-    quill.on("text-change", socket_handler)
+    const handleTextChange = (delta, oldDelta, source) => {
+      if (source !== "user") return;
+
+      newsocket.emit("send-changes", {
+        documentId: id_doc,
+        operation: delta,
+        version: version
+      });
+
+      setVersion(prev => prev + 1);
+    };
+
+    quill.on("text-change", handleTextChange);
 
     return () => {
-      quill.off("text-change", socket_handler)
+      quill.off("text-change", handleTextChange);
+    };
+  }, [newsocket, quill, id_doc]);
+
+  //useEffect4: Load document content and join collaboration
+  useEffect(() => {
+    if (quill == null) return;
+
+    // First, load document content from document service
+    const loadDocumentContent = async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        const response = await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data && data.data.data) {
+            console.log("Loading document content from document service:", data.data.data);
+            quill.setContents(data.data.data);
+            quill.enable();
+          } else {
+            console.log("No content found, starting with empty document");
+            quill.enable();
+          }
+        } else {
+          console.error("Failed to load document content");
+          quill.enable();
+        }
+      } catch (error) {
+        console.error("Error loading document content:", error);
+        quill.enable();
+      }
+    };
+
+    loadDocumentContent();
+
+    // Then join collaboration session
+    if (newsocket != null) {
+      newsocket.emit("join-document", id_doc);
+
+      // Handle successful document join
+      newsocket.on("document-joined", (data) => {
+        console.log("Joined document collaboration:", data);
+        // Don't re-enable quill here since it's already enabled after loading
+      });
+
+      // Handle document loading from collaboration service (if available)
+      newsocket.on("load-document", (content) => {
+        console.log("Received content from collaboration service:", content);
+        if (content && content.ops && content.ops.length > 0) {
+          quill.setContents(content);
+        }
+      });
     }
-  }, [newsocket, quill])
 
-  //useEffect4
+  }, [newsocket, quill, id_doc]);
+
+  //useEffect4.5: Periodic document saving
   useEffect(() => {
-    if (newsocket == null || quill == null) return
+    if (quill == null) return;
 
-    newsocket.once("load-document", document_loaded => {
-      quill.setContents(document_loaded)
-      quill.enable()
-    })
+    const saveInterval = setInterval(async () => {
+      const content = quill.getContents();
+      const text = quill.getText();
 
-    newsocket.emit("get-document", id_doc)
-  }, [newsocket, quill, id_doc])
+      if (text.trim()) { // Only save if there's actual content
+        try {
+          const token = localStorage.getItem('authToken');
+          const response = await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              data: content,
+              title: text.split('\n')[0].substring(0, 100) || 'Untitled Document' // Use first line as title
+            })
+          });
 
-  //useEffect5
+          if (response.ok) {
+            console.log('Document saved successfully');
+          } else {
+            console.error('Failed to save document:', response.statusText);
+          }
+        } catch (error) {
+          console.error('Error saving document:', error);
+        }
+      }
+    }, 3000); // Save every 3 seconds
+
+    return () => clearInterval(saveInterval);
+  }, [quill, id_doc]);
+
+  //useEffect4.6: Save on page unload
   useEffect(() => {
-    if (newsocket == null || quill == null) return
+    if (quill == null) return;
 
-    const time_interval = setInterval(() => {
-      newsocket.emit("save-document", quill.getContents())
-    }, interval_ms)
+    const handleBeforeUnload = async () => {
+      const content = quill.getContents();
+      const text = quill.getText();
+
+      if (text.trim()) {
+        try {
+          const token = localStorage.getItem('authToken');
+          await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              data: content,
+              title: text.split('\n')[0].substring(0, 100) || 'Untitled Document'
+            }),
+            keepalive: true // Ensure request completes even if page is unloading
+          });
+        } catch (error) {
+          console.error('Error saving document on unload:', error);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [quill, id_doc]);
+
+  //useEffect5: Handle cursor movements (optional)
+  useEffect(() => {
+    if (newsocket == null || quill == null) return;
+
+    const handleSelectionChange = (range, oldRange, source) => {
+      if (source === 'user' && range) {
+        newsocket.emit("cursor-move", {
+          documentId: id_doc,
+          position: range.index,
+          selection: range.length > 0 ? { start: range.index, end: range.index + range.length } : null
+        });
+      }
+    };
+
+    quill.on("selection-change", handleSelectionChange);
 
     return () => {
-      clearInterval(time_interval)
-    }
-  }, [newsocket, quill])
+      quill.off("selection-change", handleSelectionChange);
+    };
+  }, [newsocket, quill, id_doc]);
 
   const wrapperReference = useCallback(wrapper => {
     if (wrapper == null) return

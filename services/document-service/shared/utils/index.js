@@ -54,6 +54,44 @@ const isValidJWT = (token) => {
   return parts.length === 3;
 };
 
+// Service-to-service HTTP request utility
+const serviceRequest = async (url, options = {}) => {
+  const defaultOptions = {
+    timeout: 5000, // 5 second timeout
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Document-Service/1.0'
+    }
+  };
+
+  const mergedOptions = { ...defaultOptions, ...options };
+
+  // Add timeout to fetch
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), mergedOptions.timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...mergedOptions,
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Service request failed: ${response.status} ${response.statusText}`);
+    }
+
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('Service request timeout');
+    }
+    throw error;
+  }
+};
+
 module.exports = {
   generateId,
   isValidDocumentId,
@@ -61,5 +99,6 @@ module.exports = {
   createResponse,
   createErrorResponse,
   asyncHandler,
-  isValidJWT
+  isValidJWT,
+  serviceRequest
 };
