@@ -18,6 +18,11 @@ services:
       - ./scripts/init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql
     networks:
       - texteditor-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres",]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -29,6 +34,11 @@ services:
       - redis_data:/data
     networks:
       - texteditor-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Microservices
   api-gateway:
@@ -43,11 +53,20 @@ services:
       - DOCUMENT_SERVICE_URL=http://document-service:3002
       - COLLABORATION_SERVICE_URL=http://collaboration-service:3003
     depends_on:
-      - auth-service
-      - document-service
-      - collaboration-service
+      - auth-service:
+          condition: service_healthy
+      - document-service:
+          condition: service_healthy
+      - collaboration-service:
+          condition: service_healthy
     networks:
       - texteditor-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000/health" || "exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   auth-service:
     command: sh -c "npx prisma migrate deploy && npm start"
@@ -62,10 +81,18 @@ services:
       - JWT_SECRET=your-super-secret-jwt-key
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - postgres
-      - redis
+      - postgres:
+          condition: service_healthy
+      - redis:
+          condition: service_healthy
     networks:
       - texteditor-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health" || "exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   document-service:
     command: sh -c "npx prisma migrate deploy && npm start"
@@ -81,10 +108,18 @@ services:
       - AUTH_SERVICE_URL=http://auth-service:3001
       - JWT_SECRET=your-super-secret-jwt-key
     depends_on:
-      - postgres
-      - redis
+      - postgres:
+          condition: service_healthy
+      - redis:
+          condition: service_healthy
     networks:
       - texteditor-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health" || "exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 
   collaboration-service:
@@ -99,29 +134,32 @@ services:
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=your-super-secret-jwt-key
     depends_on:
-      - postgres
-      - redis
+      - postgres:
+          condition: service_healthy
+      - redis:
+          condition: service_healthy
     networks:
       - texteditor-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3003/health" || "exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # Frontend (React)
   client:
     build:
       context: ./client
       args:
-        REACT_APP_API_URL: http://localhost:3001
-        REACT_APP_DOCUMENTS_URL: http://localhost:3002
-        REACT_APP_COLLABORATION_URL: http://localhost:4000
-        REACT_APP_AUTH_URL: http://localhost:3001
+        REACT_APP_API_URL: http://localhost:4000
     container_name: texteditor-client
     restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
-      - auth-service
-      - document-service
-      - api-gateway
-      - collaboration-service
+      - api-gateway:
+          condition: service_healthy
     networks:
       - texteditor-network
 
