@@ -1,0 +1,15 @@
+{
+  "name": "shared-utils",
+  "version": "1.0.0",
+  "description": "Shared utilities for microservices - common functions, database clients, and helpers",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["microservices", "shared", "utils", "common"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "uuid": "^9.0.0"
+  }
+}

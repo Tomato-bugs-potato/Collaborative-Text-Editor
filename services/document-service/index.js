@@ -1,12 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
-const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('./shared/utils');
-
-const prisma = new PrismaClient({
-  log: ['error', 'warn'],
-});
+const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('../shared-utils');
+const prisma = require('../shared-utils/prisma-client');
 
 const app = express();
 const PORT = process.env.PORT || 3002;

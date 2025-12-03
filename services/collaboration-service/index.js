@@ -2,12 +2,8 @@ require("dotenv").config();
 const express = require('express');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
-const { createRedisClient } = require('./shared/utils');
-
-const prisma = new PrismaClient({
-  log: ['error', 'warn'],
-});
+const { createRedisClient } = require('../shared-utils/redis-client');
+const prisma = require('../shared-utils/prisma-client');
 
 const app = express();
 const PORT = process.env.PORT || 3003;
