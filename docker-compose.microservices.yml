@@ -53,16 +53,13 @@ services:
       - DOCUMENT_SERVICE_URL=http://document-service:3002
       - COLLABORATION_SERVICE_URL=http://collaboration-service:3003
     depends_on:
-      - auth-service:
-          condition: service_healthy
-      - document-service:
-          condition: service_healthy
-      - collaboration-service:
-          condition: service_healthy
+      - auth-service
+      - document-service
+      - collaboration-service
     networks:
       - texteditor-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000/health" || "exit 1"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -81,14 +78,12 @@ services:
       - JWT_SECRET=your-super-secret-jwt-key
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - postgres:
-          condition: service_healthy
-      - redis:
-          condition: service_healthy
+      - postgres
+      - redis
     networks:
       - texteditor-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health" || "exit 1"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -108,14 +103,12 @@ services:
       - AUTH_SERVICE_URL=http://auth-service:3001
       - JWT_SECRET=your-super-secret-jwt-key
     depends_on:
-      - postgres:
-          condition: service_healthy
-      - redis:
-          condition: service_healthy
+      - postgres
+      - redis
     networks:
       - texteditor-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health" || "exit 1"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -134,14 +127,12 @@ services:
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=your-super-secret-jwt-key
     depends_on:
-      - postgres:
-          condition: service_healthy
-      - redis:
-          condition: service_healthy
+      - postgres
+      - redis
     networks:
       - texteditor-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3003/health" || "exit 1"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3003/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -158,8 +149,7 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - api-gateway:
-          condition: service_healthy
+      - api-gateway
     networks:
       - texteditor-network
 
