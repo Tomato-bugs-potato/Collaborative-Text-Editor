@@ -187,6 +187,8 @@ postgresql://postgres:mypassword@host1:5432,host2:5432,host3:5432/texteditor?sch
 ```
 
 ## Contributing
+
+Made with the effort of AASTU'S FIFTH year Students.
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
 Please make sure to update tests as appropriate.
