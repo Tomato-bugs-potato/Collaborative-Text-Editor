@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 
-const AUTH_BASE_URL = process.env.REACT_APP_AUTH_URL || 'http://localhost:3001';
-const DOCUMENTS_BASE_URL = process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
+const AUTH_BASE_URL = `${API_BASE_URL}/api/auth`;
+const DOCUMENTS_BASE_URL = `${API_BASE_URL}/api/documents`;
 
 export default function ShareModal({ documentId, onClose }) {
   const [searchTerm, setSearchTerm] = useState('');
