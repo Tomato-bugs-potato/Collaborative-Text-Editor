@@ -10,6 +10,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "kafkajs": "^2.2.4",
+    "redis": "^4.6.7"
   }
 }
