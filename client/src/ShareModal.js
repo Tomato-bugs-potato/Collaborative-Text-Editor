@@ -19,7 +19,7 @@ export default function ShareModal({ documentId, onClose }) {
   const loadCollaborators = async () => {
     try {
       const token = localStorage.getItem('authToken');
-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents/${documentId}`, {
+      const response = await fetch(`${DOCUMENTS_BASE_URL}/${documentId}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -72,7 +72,7 @@ export default function ShareModal({ documentId, onClose }) {
       setLoading(true);
       const token = localStorage.getItem('authToken');
 
-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents/${documentId}/collaborators`, {
+      const response = await fetch(`${DOCUMENTS_BASE_URL}/${documentId}/collaborators`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -110,7 +110,7 @@ export default function ShareModal({ documentId, onClose }) {
       setLoading(true);
       const token = localStorage.getItem('authToken');
 
-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents/${documentId}/collaborators/${userId}`, {
+      const response = await fetch(`${DOCUMENTS_BASE_URL}/${documentId}/collaborators/${userId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
