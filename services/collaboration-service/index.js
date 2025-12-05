@@ -20,12 +20,22 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', service: 'collaboration-service' });
 });
 
+const { createAdapter } = require("@socket.io/redis-adapter");
+
 // Socket.IO server with Redis adapter
 const io = new Server({
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   }
+});
+
+// Connect Redis clients and attach adapter
+Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
+  io.adapter(createAdapter(pubClient, subClient));
+  console.log('Redis adapter connected');
+}).catch(err => {
+  console.error('Redis adapter connection error:', err);
 });
 
 // JWT authentication middleware for sockets

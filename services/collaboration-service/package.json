@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "Real-time collaboration service handling WebSocket connections and operational transformation",
   "main": "index.js",
-    "scripts": {
-      "start": "node index.js",
-      "dev": "nodemon index.js"
-    },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
   "author": "",
   "license": "ISC",
   "dependencies": {

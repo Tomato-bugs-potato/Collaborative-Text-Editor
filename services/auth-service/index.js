@@ -17,14 +17,11 @@ app.get('/health', (req, res) => {
   res.json(createResponse(true, null, 'Auth service is healthy'));
 });
 
-// Register endpoint
-app.post('/register', asyncHandler(async (req, res) => {
-  const { email, password, name } = req.body;
+const { validate, registerSchema, loginSchema } = require('./src/utils/validation');
 
-  // Validate input
-  if (!email || !password || !name) {
-    return res.status(400).json(createErrorResponse('Email, password, and name are required', 400));
-  }
+// Register endpoint
+app.post('/register', validate(registerSchema), asyncHandler(async (req, res) => {
+  const { email, password, name } = req.body;
 
   // Check if user exists
   const existingUser = await prisma.user.findUnique({
@@ -58,13 +55,8 @@ app.post('/register', asyncHandler(async (req, res) => {
 }));
 
 // Login endpoint
-app.post('/login', asyncHandler(async (req, res) => {
+app.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-
-  // Validate input
-  if (!email || !password) {
-    return res.status(400).json(createErrorResponse('Email and password are required', 400));
-  }
 
   // Find user
   const user = await prisma.user.findUnique({
