@@ -406,6 +406,7 @@ services:
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - JWT_SECRET=your-super-secret-jwt-key
+      - AUTH_SERVICE_URL=http://auth-service-1:3001
     ports:
       - "3002:3002"
     depends_on:
@@ -436,6 +437,7 @@ services:
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - JWT_SECRET=your-super-secret-jwt-key
+      - AUTH_SERVICE_URL=http://auth-service-1:3001
     ports:
       - "3012:3002"
     depends_on:
