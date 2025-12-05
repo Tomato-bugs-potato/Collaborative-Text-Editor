@@ -79,7 +79,7 @@ app.use('/api/documents', authenticateRequest, createProxyMiddleware({
   },
   changeOrigin: true,
   pathRewrite: {
-    '^/api/documents': ''
+    '^/api/documents': '/documents'
   }
 }));
 
