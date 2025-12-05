@@ -29,7 +29,7 @@ const publishDocumentEvent = async (type, payload) => {
 
     try {
         await producer.send({
-            topic: 'document-changes',
+            topic: 'document-events',
             messages: [
                 {
                     key: payload.documentId || 'unknown',

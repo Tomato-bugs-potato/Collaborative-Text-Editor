@@ -6,6 +6,8 @@ const prisma = require('./shared-utils/prisma-client');
 const { validate, createDocumentSchema, updateDocumentSchema, addCollaboratorSchema } = require('./src/utils/validation');
 const { connectProducer, publishDocumentEvent } = require('./src/utils/kafka-producer');
 const { cache, invalidateCache } = require('./src/middleware/cache');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpecs = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -13,6 +15,9 @@ const PORT = process.env.PORT || 3002;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Swagger UI
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 
 // JWT authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -38,6 +43,16 @@ app.get('/health', (req, res) => {
 });
 
 // Get all documents for authenticated user
+/**
+ * @swagger
+ * /documents:
+ *   get:
+ *     summary: Get all documents for the authenticated user
+ *     tags: [Documents]
+ *     responses:
+ *       200:
+ *         description: List of documents
+ */
 app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
   const documents = await prisma.document.findMany({
     where: {
@@ -64,6 +79,24 @@ app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
 }));
 
 // Get specific document (with caching)
+/**
+ * @swagger
+ * /documents/{id}:
+ *   get:
+ *     summary: Get a specific document by ID
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Document details
+ *       404:
+ *         description: Document not found
+ */
 app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -94,6 +127,27 @@ app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res
 }));
 
 // Create new document (with validation)
+/**
+ * @swagger
+ * /documents:
+ *   post:
+ *     summary: Create a new document
+ *     tags: [Documents]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               content:
+ *                 type: object
+ *     responses:
+ *       201:
+ *         description: Document created successfully
+ */
 app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncHandler(async (req, res) => {
   const { title, content } = req.body;
   const docId = generateId();
@@ -121,6 +175,35 @@ app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncH
 }));
 
 // Update document (with validation)
+/**
+ * @swagger
+ * /documents/{id}:
+ *   put:
+ *     summary: Update a document
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               data:
+ *                 type: object
+ *     responses:
+ *       200:
+ *         description: Document updated successfully
+ *       404:
+ *         description: Document not found
+ */
 app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { title, data } = req.body;
@@ -174,6 +257,24 @@ app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asy
 }));
 
 // Delete document
+/**
+ * @swagger
+ * /documents/{id}:
+ *   delete:
+ *     summary: Delete a document
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Document deleted successfully
+ *       404:
+ *         description: Document not found
+ */
 app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -207,6 +308,41 @@ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) =>
 }));
 
 // Add collaborator to document (with validation)
+/**
+ * @swagger
+ * /documents/{id}/collaborators:
+ *   post:
+ *     summary: Add a collaborator to a document
+ *     tags: [Collaborators]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - userId
+ *               - role
+ *             properties:
+ *               userId:
+ *                 type: integer
+ *               role:
+ *                 type: string
+ *                 enum: [viewer, editor]
+ *     responses:
+ *       201:
+ *         description: Collaborator added successfully
+ *       404:
+ *         description: Document not found
+ *       409:
+ *         description: User is already a collaborator
+ */
 app.post('/documents/:id/collaborators', authenticateToken, validate(addCollaboratorSchema), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { userId, role } = req.body;
@@ -274,6 +410,29 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
 }));
 
 // Remove collaborator from document
+/**
+ * @swagger
+ * /documents/{id}/collaborators/{userId}:
+ *   delete:
+ *     summary: Remove a collaborator from a document
+ *     tags: [Collaborators]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Collaborator removed successfully
+ *       404:
+ *         description: Document not found
+ */
 app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandler(async (req, res) => {
   const { id, userId } = req.params;
 

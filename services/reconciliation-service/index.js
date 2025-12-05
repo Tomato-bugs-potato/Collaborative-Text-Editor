@@ -16,7 +16,7 @@ const kafka = new Kafka({
   }
 });
 
-const consumer = kafka.consumer({ 
+const consumer = kafka.consumer({
   groupId: consumerGroup,
   sessionTimeout: 30000,
   heartbeatInterval: 3000
@@ -25,12 +25,17 @@ const consumer = kafka.consumer({
 async function reconcileDocument(message) {
   const { documentId, operation, timestamp, userId } = JSON.parse(message.value.toString());
 
-  console.log(`[${instanceId}] Reconciling document ${documentId}, operation: ${operation}`);
+  console.log(`[${instanceId}] Reconciling document ${documentId}, operation: ${operation ? 'present' : 'undefined'}`);
+
+  if (!operation) {
+    console.warn(`[${instanceId}] Skipping message with no operation`);
+    return;
+  }
 
   try {
     // Placeholder for actual reconciliation logic
     // For now, just log the operation without database storage
-    console.log(`[${instanceId}] Would store: document=${documentId}, operation=${operation}, user=${userId}, timestamp=${timestamp}`);
+    console.log(`[${instanceId}] Would store: document=${documentId}, operation=${JSON.stringify(operation)}, user=${userId}, timestamp=${timestamp}`);
 
     console.log(`[${instanceId}] Successfully reconciled document ${documentId}`);
   } catch (error) {
@@ -39,31 +44,41 @@ async function reconcileDocument(message) {
   }
 }
 
+async function handleDocumentEvent(message) {
+  const event = JSON.parse(message.value.toString());
+  console.log(`[${instanceId}] Received document event: ${event.type} for doc ${event.documentId}`);
+  // Handle lifecycle events (created, updated, deleted)
+}
+
 async function run() {
   try {
     await consumer.connect();
     console.log(`[${instanceId}] Connected to Kafka`);
-    
-    await consumer.subscribe({ 
-      topics: ['document-changes', 'collaboration-events'],
-      fromBeginning: false 
+
+    await consumer.subscribe({
+      topics: ['document-changes', 'document-events'],
+      fromBeginning: false
     });
-    
+
     console.log(`[${instanceId}] Subscribed to topics`);
-    
+
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
         console.log(`[${instanceId}] Received message from topic ${topic}, partition ${partition}`);
-        
+
         try {
-          await reconcileDocument(message);
+          if (topic === 'document-changes') {
+            await reconcileDocument(message);
+          } else if (topic === 'document-events') {
+            await handleDocumentEvent(message);
+          }
         } catch (error) {
           console.error(`[${instanceId}] Failed to process message:`, error);
           // In production, you might want to send to a dead letter queue
         }
       },
     });
-    
+
     console.log(`[${instanceId}] Consumer running`);
   } catch (error) {
     console.error(`[${instanceId}] Error starting consumer:`, error);

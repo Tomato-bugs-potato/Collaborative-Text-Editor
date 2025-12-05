@@ -16,7 +16,9 @@
     "joi": "^18.0.2",
     "jsonwebtoken": "^9.0.0",
     "pg": "^8.11.0",
-    "prisma": "^5.0.0"
+    "prisma": "^5.0.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.16"
