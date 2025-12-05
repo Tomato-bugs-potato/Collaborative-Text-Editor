@@ -97,20 +97,23 @@ export default function TextEditor() {
 
         if (response.ok) {
           const data = await response.json();
-          if (data.success && data.data && data.data.data) {
+          if (data.success && data.data && data.data.data && Object.keys(data.data.data).length > 0) {
             console.log("Loading document content from document service:", data.data.data);
             quill.setContents(data.data.data);
             quill.enable();
           } else {
             console.log("No content found, starting with empty document");
+            quill.setText("");
             quill.enable();
           }
         } else {
           console.error("Failed to load document content");
+          quill.setText("");
           quill.enable();
         }
       } catch (error) {
         console.error("Error loading document content:", error);
+        quill.setText("");
         quill.enable();
       }
     };
