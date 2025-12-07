@@ -1,11 +1,21 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
-const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
+const url = require('url');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// Parse service URLs with fallback defaults
+const authServices = (process.env.AUTH_SERVICE_URL || 'http://auth-service-1:3001').split(',').map(u => u.trim());
+const documentServices = (process.env.DOCUMENT_SERVICE_URL || 'http://document-service-1:3002').split(',').map(u => u.trim());
+const collaborationServices = (process.env.COLLABORATION_SERVICE_URL || 'http://collaboration-service-1:3003').split(',').map(u => u.trim());
+
+// Load balancing counters
+let authIndex = 0;
+let documentIndex = 0;
+let collaborationIndex = 0;
 
 // Middleware
 app.use(cors());
@@ -15,69 +25,14 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     service: 'api-gateway',
-    timestamp: new Date().toISOString(),
-    services: {
-      auth: process.env.AUTH_SERVICE_URL || 'http://localhost:3001',
-      document: process.env.DOCUMENT_SERVICE_URL || 'http://localhost:3002',
-      collaboration: process.env.COLLABORATION_SERVICE_URL || 'http://localhost:3003'
-    }
+    timestamp: new Date().toISOString()
   });
-});
-
-// Manual proxy to Auth Service
-app.use('/api/auth', (req, res) => {
-  console.log(`[API Gateway] Manual proxy: ${req.method} ${req.originalUrl}`);
-
-  // Remove /api/auth prefix
-  const targetPath = req.originalUrl.replace('/api/auth', '');
-
-  const options = {
-    hostname: 'auth-service',
-    port: 3001,
-    path: targetPath,
-    method: req.method,
-    headers: {
-      ...req.headers,
-      host: 'auth-service:3001'
-    }
-  };
-
-  const proxyReq = require('http').request(options, (proxyRes) => {
-    console.log(`[API Gateway] Response: ${proxyRes.statusCode}`);
-    res.status(proxyRes.statusCode);
-
-    // Copy headers
-    Object.keys(proxyRes.headers).forEach(key => {
-      res.setHeader(key, proxyRes.headers[key]);
-    });
-
-    // Pipe response
-    proxyRes.pipe(res);
-  });
-
-  proxyReq.on('error', (err) => {
-    console.error('[API Gateway] Proxy error:', err.message);
-    res.status(500).json({ error: 'Proxy error', message: err.message });
-  });
-
-  // Pipe request body if present
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    req.pipe(proxyReq);
-  } else {
-    proxyReq.end();
-  }
-});
-
-// Request logging
-app.use((req, res, next) => {
-  console.log(`[API Gateway] Unhandled ${req.method} ${req.originalUrl}`);
-  next();
 });
 
 // JWT Authentication middleware
 const authenticateRequest = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+  const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
     return res.status(401).json({
@@ -93,28 +48,55 @@ const authenticateRequest = (req, res, next) => {
         message: 'The provided JWT token is invalid or has expired'
       });
     }
-    req.user = user; // Attach user info to request
+    req.user = user;
     next();
   });
 };
 
-// Route requests to Document Service
-app.use('/api/documents', authenticateRequest, createProxyMiddleware({
-  target: process.env.DOCUMENT_SERVICE_URL || 'http://localhost:3002',
+// Auth Service proxy (no authentication required)
+app.use('/api/auth', createProxyMiddleware({
+  target: authServices[0], // Default target
+  router: () => {
+    const target = authServices[authIndex % authServices.length];
+    authIndex++;
+    console.log(`[API Gateway] Routing to auth service: ${target}`);
+    return url.parse(target);
+  },
   changeOrigin: true,
   pathRewrite: {
-    '^/api/documents': '' // Remove /api/documents prefix when forwarding
+    '^/api/auth': ''
   }
 }));
 
-// Route WebSocket connections to Collaboration Service
-app.use('/socket.io', createProxyMiddleware({
-  target: process.env.COLLABORATION_SERVICE_URL || 'http://localhost:3003',
+// Document Service proxy (requires authentication)
+app.use('/api/documents', authenticateRequest, createProxyMiddleware({
+  target: documentServices[0], // Default target
+  router: () => {
+    const target = documentServices[documentIndex % documentServices.length];
+    documentIndex++;
+    console.log(`[API Gateway] Routing to document service: ${target}`);
+    return url.parse(target);
+  },
   changeOrigin: true,
-  ws: true // Enable WebSocket proxying
+  pathRewrite: {
+    '^/api/documents': ''
+  }
 }));
 
-// Catch-all route for unmatched requests
+// WebSocket proxy for Collaboration Service
+app.use('/socket.io', createProxyMiddleware({
+  target: collaborationServices[0], // Default target
+  router: () => {
+    const target = collaborationServices[collaborationIndex % collaborationServices.length];
+    collaborationIndex++;
+    console.log(`[API Gateway] Routing to collaboration service: ${target}`);
+    return url.parse(target);
+  },
+  changeOrigin: true,
+  ws: true
+}));
+
+// Catch-all route
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Not Found',
@@ -131,6 +113,7 @@ app.use('*', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('API Gateway Error:', err);
+  console.error('Stack:', err.stack);
   res.status(500).json({
     error: 'Internal Server Error',
     message: 'Something went wrong in the API Gateway'
@@ -141,9 +124,9 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`API Gateway running on port ${PORT}`);
   console.log('Routing requests to:');
-  console.log(`  Auth Service: ${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}`);
-  console.log(`  Document Service: ${process.env.DOCUMENT_SERVICE_URL || 'http://localhost:3002'}`);
-  console.log(`  Collaboration Service: ${process.env.COLLABORATION_SERVICE_URL || 'http://localhost:3003'}`);
+  console.log(`  Auth Services: ${authServices.join(', ')}`);
+  console.log(`  Document Services: ${documentServices.join(', ')}`);
+  console.log(`  Collaboration Services: ${collaborationServices.join(', ')}`);
 });
 
 module.exports = app;

@@ -25,7 +25,7 @@ export default function Auth({ onLogin }) {
     setError('');
 
     try {
-      const endpoint = isLogin ? '/login' : '/register';
+      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
         headers: {
