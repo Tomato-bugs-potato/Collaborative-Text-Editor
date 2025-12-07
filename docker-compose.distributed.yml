@@ -194,7 +194,8 @@ services:
   redis-node-1:
     image: redis:7-alpine
     container_name: redis-node-1
-    command: redis-server --port 7001 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no
+    hostname: redis-node-1
+    command: redis-server --port 7001 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-1 --cluster-preferred-endpoint-type hostname
     ports:
       - "7001:7001"
     volumes:
@@ -205,7 +206,8 @@ services:
   redis-node-2:
     image: redis:7-alpine
     container_name: redis-node-2
-    command: redis-server --port 7002 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no
+    hostname: redis-node-2
+    command: redis-server --port 7002 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-2 --cluster-preferred-endpoint-type hostname
     ports:
       - "7002:7002"
     volumes:
@@ -216,7 +218,8 @@ services:
   redis-node-3:
     image: redis:7-alpine
     container_name: redis-node-3
-    command: redis-server --port 7003 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no
+    hostname: redis-node-3
+    command: redis-server --port 7003 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-3 --cluster-preferred-endpoint-type hostname
     ports:
       - "7003:7003"
     volumes:
@@ -227,7 +230,8 @@ services:
   redis-node-4:
     image: redis:7-alpine
     container_name: redis-node-4
-    command: redis-server --port 7004 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no
+    hostname: redis-node-4
+    command: redis-server --port 7004 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-4 --cluster-preferred-endpoint-type hostname
     ports:
       - "7004:7004"
     volumes:
@@ -238,7 +242,8 @@ services:
   redis-node-5:
     image: redis:7-alpine
     container_name: redis-node-5
-    command: redis-server --port 7005 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no
+    hostname: redis-node-5
+    command: redis-server --port 7005 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-5 --cluster-preferred-endpoint-type hostname
     ports:
       - "7005:7005"
     volumes:
@@ -249,7 +254,8 @@ services:
   redis-node-6:
     image: redis:7-alpine
     container_name: redis-node-6
-    command: redis-server --port 7006 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no
+    hostname: redis-node-6
+    command: redis-server --port 7006 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-6 --cluster-preferred-endpoint-type hostname
     ports:
       - "7006:7006"
     volumes:
@@ -352,6 +358,10 @@ services:
       - DB_REPLICA_1=postgres-replica-1
       - DB_REPLICA_2=postgres-replica-2
       - JWT_SECRET=your-super-secret-jwt-key
+      - GOOGLE_CLIENT_ID=969716305726-r3v0ue477522soi6sta45qh62gnstei4.apps.googleusercontent.com
+      - GOOGLE_CLIENT_SECRET=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
+      - GOOGLE_CALLBACK_URL=http://localhost:3001/auth/google/callback
+      - CLIENT_URL=http://localhost:3000
     ports:
       - "3001:3001"
     depends_on:
@@ -378,6 +388,10 @@ services:
       - DB_REPLICA_1=postgres-replica-1
       - DB_REPLICA_2=postgres-replica-2
       - JWT_SECRET=your-super-secret-jwt-key
+      - GOOGLE_CLIENT_ID=969716305726-r3v0ue477522soi6sta45qh62gnstei4.apps.googleusercontent.com
+      - GOOGLE_CLIENT_SECRET=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
+      - GOOGLE_CALLBACK_URL=http://localhost:3011/auth/google/callback
+      - CLIENT_URL=http://localhost:3000
     ports:
       - "3011:3001"
     depends_on:
@@ -584,6 +598,9 @@ services:
       context: ./client
       args:
         REACT_APP_API_URL: http://localhost
+        REACT_APP_EMAILJS_SERVICE_ID: service_rltt2o9
+        REACT_APP_EMAILJS_TEMPLATE_ID: template_bj1va2w
+        REACT_APP_EMAILJS_PUBLIC_KEY: GsEMmAKjKPLWQ91Eu
     container_name: texteditor-client
     restart: unless-stopped
     ports:
