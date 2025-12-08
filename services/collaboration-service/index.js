@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require('express');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
+const { createAdapter } = require('@socket.io/redis-adapter');
 const { createRedisClient } = require('../shared-utils/redis-client');
 const prisma = require('../shared-utils/prisma-client');
 
@@ -27,6 +28,16 @@ const io = new Server({
     methods: ["GET", "POST"]
   }
 });
+
+// Connect Redis clients and attach Socket.IO adapter
+Promise.all([pubClient.connect(), subClient.connect()])
+  .then(() => {
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('Redis adapter connected');
+  })
+  .catch((err) => {
+    console.error('Redis adapter connection error:', err);
+  });
 
 // JWT authentication middleware for sockets
 io.use(async (socket, next) => {
