@@ -29,6 +29,7 @@ export default function TextEditor() {
 
     // Connect to collaboration service through API Gateway
     const s_socket = io(process.env.REACT_APP_API_URL || 'http://localhost', {
+      transports: ['websocket'],
       auth: {
         token: token
       }
