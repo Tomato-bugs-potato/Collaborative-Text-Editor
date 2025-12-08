@@ -1,8 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('../shared-utils');
-const prisma = require('../shared-utils/prisma-client');
+const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('./shared-utils');
+const prisma = require('./shared-utils/prisma-client');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpecs = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -10,6 +12,9 @@ const PORT = process.env.PORT || 3002;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Swagger UI
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 
 // JWT authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -59,6 +64,16 @@ app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
 
   res.json(createResponse(true, documents, 'Documents retrieved successfully'));
 }));
+/**
+ * @swagger
+ * /documents:
+ *   get:
+ *     summary: Get all documents for the authenticated user
+ *     tags: [Documents]
+ *     responses:
+ *       200:
+ *         description: List of documents
+ */
 
 // Get specific document
 app.get('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
@@ -89,6 +104,24 @@ app.get('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
 
   res.json(createResponse(true, document, 'Document retrieved successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}:
+ *   get:
+ *     summary: Get a specific document by ID
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Document details
+ *       404:
+ *         description: Document not found
+ */
 
 // Create new document
 app.post('/documents', authenticateToken, asyncHandler(async (req, res) => {
@@ -108,6 +141,27 @@ app.post('/documents', authenticateToken, asyncHandler(async (req, res) => {
 
   res.status(201).json(createResponse(true, document, 'Document created successfully'));
 }));
+/**
+ * @swagger
+ * /documents:
+ *   post:
+ *     summary: Create a new document
+ *     tags: [Documents]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               content:
+ *                 type: object
+ *     responses:
+ *       201:
+ *         description: Document created successfully
+ */
 
 // Update document
 app.put('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
@@ -151,6 +205,35 @@ app.put('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
 
   res.json(createResponse(true, updatedDocument, 'Document updated successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}:
+ *   put:
+ *     summary: Update a document
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               data:
+ *                 type: object
+ *     responses:
+ *       200:
+ *         description: Document updated successfully
+ *       404:
+ *         description: Document not found
+ */
 
 // Delete document
 app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
@@ -175,6 +258,24 @@ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) =>
 
   res.json(createResponse(true, null, 'Document deleted successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}:
+ *   delete:
+ *     summary: Delete a document
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Document deleted successfully
+ *       404:
+ *         description: Document not found
+ */
 
 // Add collaborator to document
 app.post('/documents/:id/collaborators', authenticateToken, asyncHandler(async (req, res) => {
@@ -234,6 +335,40 @@ app.post('/documents/:id/collaborators', authenticateToken, asyncHandler(async (
 
   res.status(201).json(createResponse(true, collaborator, 'Collaborator added successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}/collaborators:
+ *   post:
+ *     summary: Add a collaborator to a document
+ *     tags: [Collaborators]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - userId
+ *             properties:
+ *               userId:
+ *                 type: integer
+ *               role:
+ *                 type: string
+ *                 enum: [viewer, editor]
+ *     responses:
+ *       201:
+ *         description: Collaborator added successfully
+ *       404:
+ *         description: Document not found
+ *       409:
+ *         description: User is already a collaborator
+ */
 
 // Remove collaborator from document
 app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandler(async (req, res) => {
@@ -263,6 +398,29 @@ app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandl
 
   res.json(createResponse(true, null, 'Collaborator removed successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}/collaborators/{userId}:
+ *   delete:
+ *     summary: Remove a collaborator from a document
+ *     tags: [Collaborators]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Collaborator removed successfully
+ *       404:
+ *         description: Document not found
+ */
 
 // Start server
 app.listen(PORT, async () => {

@@ -1,10 +1,11 @@
 require("dotenv").config();
 const express = require('express');
 const { Server } = require('socket.io');
+const { Kafka } = require('kafkajs');
 const jwt = require('jsonwebtoken');
 const { createAdapter } = require('@socket.io/redis-adapter');
-const { createRedisClient } = require('../shared-utils/redis-client');
-const prisma = require('../shared-utils/prisma-client');
+const { createRedisClient } = require('./shared-utils/redis-client');
+const prisma = require('./shared-utils/prisma-client');
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -12,6 +13,31 @@ const PORT = process.env.PORT || 3003;
 // Create Redis clients for pub/sub
 const pubClient = createRedisClient('publisher');
 const subClient = createRedisClient('subscriber');
+
+// Kafka Configuration
+const kafka = new Kafka({
+  clientId: 'collaboration-service',
+  brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
+  retry: {
+    initialRetryTime: 100,
+    retries: 8
+  }
+});
+
+const producer = kafka.producer();
+let isProducerConnected = false;
+
+const connectProducer = async () => {
+  try {
+    await producer.connect();
+    isProducerConnected = true;
+    console.log('Kafka producer connected');
+  } catch (error) {
+    console.error('Failed to connect Kafka producer:', error);
+  }
+};
+
+connectProducer();
 
 // Middleware
 app.use(express.json());
@@ -176,6 +202,29 @@ io.on('connection', async (socket) => {
         userId: socket.userId,
         otId: ot.id
       });
+
+      // Publish to Kafka for reconciliation
+      if (isProducerConnected) {
+        try {
+          await producer.send({
+            topic: 'document-changes',
+            messages: [
+              {
+                key: documentId,
+                value: JSON.stringify({
+                  documentId,
+                  operation,
+                  version,
+                  userId: socket.userId,
+                  timestamp: new Date().toISOString()
+                })
+              }
+            ]
+          });
+        } catch (err) {
+          console.error('Failed to publish to Kafka:', err);
+        }
+      }
 
     } catch (error) {
       console.error('Error processing changes:', error);
