@@ -399,7 +399,7 @@ services:
     environment:
       - PORT=3002
       - INSTANCE_ID=doc-1
-      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_docs
       - DB_HOST=postgres-master
       - DB_REPLICA_1=postgres-replica-1
       - DB_REPLICA_2=postgres-replica-2
@@ -428,7 +428,7 @@ services:
     environment:
       - PORT=3002
       - INSTANCE_ID=doc-2
-      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_docs
       - DB_HOST=postgres-master
       - DB_REPLICA_1=postgres-replica-1
       - DB_REPLICA_2=postgres-replica-2
@@ -457,7 +457,7 @@ services:
     environment:
       - PORT=3003
       - INSTANCE_ID=collab-1
-      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
@@ -479,7 +479,7 @@ services:
     environment:
       - PORT=3003
       - INSTANCE_ID=collab-2
-      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
@@ -501,7 +501,7 @@ services:
     environment:
       - PORT=3003
       - INSTANCE_ID=collab-3
-      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
