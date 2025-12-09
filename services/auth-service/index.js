@@ -43,21 +43,20 @@ app.get('/health', (req, res) => {
  *                 format: email
  *               password:
  *                 type: string
- *                 minLength: 6
+ *                 description: Must have 8+ characters with one uppercase letter, one lowercase letter, one number, and one special character
  *               name:
  *                 type: string
  *     responses:
  *       201:
  *         description: User registered successfully
  *       400:
- *         description: Validation error
+ *         description: Validation error (password too weak)
  *       409:
  *         description: User already exists
  */
-app.post('/register', validate(registerSchema), asyncHandler(async (req, res) => {
+app.post('/register', authLimiter, validate(registerSchema), asyncHandler(async (req, res) => {
   const { email, password, name } = req.body;
 
-  // Check if user exists
   const existingUser = await prisma.user.findUnique({
     where: { email }
   });
@@ -66,29 +65,28 @@ app.post('/register', validate(registerSchema), asyncHandler(async (req, res) =>
     return res.status(409).json(createErrorResponse('User already exists', 409));
   }
 
-  // Hash password
   const saltRounds = 10;
   const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-  // Create user
   const user = await prisma.user.create({
     data: {
       email,
       password: hashedPassword,
-      name
+      name,
+      emailVerified: false
     },
     select: {
       id: true,
       email: true,
       name: true,
+      emailVerified: true,
       createdAt: true
     }
   });
 
-  res.status(201).json(createResponse(true, user, 'User registered successfully'));
+  res.status(201).json(createResponse(true, user, 'User registered successfully. Please verify your email.'));
 }));
 
-// Login endpoint
 /**
  * @swagger
  * /login:
@@ -107,72 +105,175 @@ app.post('/register', validate(registerSchema), asyncHandler(async (req, res) =>
  *             properties:
  *               email:
  *                 type: string
- *                 format: email
  *               password:
  *                 type: string
  *     responses:
  *       200:
- *         description: Login successful
- *       400:
- *         description: Validation error
+ *         description: Login successful, returns access and refresh tokens
  *       401:
  *         description: Invalid credentials
  */
-app.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
+app.post('/login', authLimiter, validate(loginSchema), asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  // Find user
   const user = await prisma.user.findUnique({
     where: { email }
   });
 
-  if (!user) {
+  if (!user || !user.password) {
     return res.status(401).json(createErrorResponse('Invalid credentials', 401));
   }
 
-  // Check password
   const isValidPassword = await bcrypt.compare(password, user.password);
   if (!isValidPassword) {
     return res.status(401).json(createErrorResponse('Invalid credentials', 401));
   }
 
-  // Generate JWT
-  const token = jwt.sign(
-    { userId: user.id, email: user.email },
-    process.env.JWT_SECRET || 'default-secret-key',
-    { expiresIn: '24h' }
-  );
+  if (!user.emailVerified) {
+    return res.status(403).json(createErrorResponse('Email not verified. Please verify your email to login.', 403));
+  }
 
-  // Return user data and token
+  const { accessToken, refreshToken } = generateTokens(user);
+
+  // Store refresh token
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { refreshToken }
+  });
+
   const userData = {
     id: user.id,
     email: user.email,
     name: user.name,
-    token
+    emailVerified: user.emailVerified,
+    token: accessToken,
+    refreshToken
   };
 
   res.json(createResponse(true, userData, 'Login successful'));
 }));
 
-// Middleware to verify JWT
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+/**
+ * @swagger
+ * /refresh-token:
+ *   post:
+ *     summary: Get new access token using refresh token
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - refreshToken
+ *             properties:
+ *               refreshToken:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: New tokens generated
+ *       401:
+ *         description: Invalid refresh token
+ */
+app.post('/refresh-token', asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body;
 
-  if (!token) {
-    return res.status(401).json(createErrorResponse('Access token required', 401));
+  if (!refreshToken) {
+    return res.status(401).json(createErrorResponse('Refresh token required', 401));
   }
 
-  jwt.verify(token, process.env.JWT_SECRET || 'default-secret-key', (err, user) => {
-    if (err) {
-      return res.status(403).json(createErrorResponse('Invalid or expired token', 403));
-    }
-    req.user = user;
-    next();
+  const user = await prisma.user.findFirst({
+    where: { refreshToken }
   });
-};
 
-// Protected route example
+  if (!user) {
+    return res.status(401).json(createErrorResponse('Invalid refresh token', 401));
+  }
+
+  const tokens = generateTokens(user);
+
+  // Update refresh token (rotation)
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { refreshToken: tokens.refreshToken }
+  });
+
+  res.json(createResponse(true, {
+    token: tokens.accessToken,
+    refreshToken: tokens.refreshToken
+  }, 'Tokens refreshed successfully'));
+}));
+
+/**
+ * @swagger
+ * /verify-email:
+ *   post:
+ *     summary: Mark email as verified (called after EmailJS verification)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - verificationCode
+ *             properties:
+ *               email:
+ *                 type: string
+ *               verificationCode:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Email verified successfully
+ */
+app.post('/verify-email', asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  // In production, verify the code against stored verification codes
+  // For now, we trust the client-side EmailJS verification
+
+  const user = await prisma.user.update({
+    where: { email },
+    data: { emailVerified: true },
+    select: {
+      id: true,
+      email: true,
+      emailVerified: true
+    }
+  });
+
+  res.json(createResponse(true, user, 'Email verified successfully'));
+}));
+
+// ===================
+// GOOGLE OAUTH ROUTES
+// ===================
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] })
+);
+
+app.get('/auth/google/callback',
+  passport.authenticate('google', { session: false, failureRedirect: '/login' }),
+  async (req, res) => {
+    const { accessToken, refreshToken } = generateTokens(req.user);
+
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { refreshToken }
+    });
+
+    // Redirect to client with tokens
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    res.redirect(`${clientUrl}/auth/callback?token=${accessToken}&refreshToken=${refreshToken}`);
+  }
+);
+
+// ===================
+// PROTECTED ROUTES
+// ===================
 app.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user.userId },
@@ -191,7 +292,6 @@ app.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
   res.json(createResponse(true, user, 'Profile retrieved successfully'));
 }));
 
-// Search users by email or name
 app.get('/users/search', authenticateToken, asyncHandler(async (req, res) => {
   const { q } = req.query;
 
@@ -202,7 +302,7 @@ app.get('/users/search', authenticateToken, asyncHandler(async (req, res) => {
   const users = await prisma.user.findMany({
     where: {
       AND: [
-        { id: { not: req.user.userId } }, // Exclude current user
+        { id: { not: req.user.userId } },
         {
           OR: [
             { email: { contains: q, mode: 'insensitive' } },
@@ -216,14 +316,13 @@ app.get('/users/search', authenticateToken, asyncHandler(async (req, res) => {
       email: true,
       name: true
     },
-    take: 10, // Limit results
+    take: 10,
     orderBy: { name: 'asc' }
   });
 
   res.json(createResponse(true, users, 'Users found'));
 }));
 
-// Get user by ID
 app.get('/users/:id', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -233,6 +332,7 @@ app.get('/users/:id', authenticateToken, asyncHandler(async (req, res) => {
       id: true,
       email: true,
       name: true,
+      emailVerified: true,
       createdAt: true
     }
   });
@@ -244,12 +344,27 @@ app.get('/users/:id', authenticateToken, asyncHandler(async (req, res) => {
   res.json(createResponse(true, user, 'User found'));
 }));
 
-// Start server
+// Logout (invalidate refresh token)
+app.post('/logout', authenticateToken, asyncHandler(async (req, res) => {
+  await prisma.user.update({
+    where: { id: req.user.userId },
+    data: { refreshToken: null }
+  });
+
+  res.json(createResponse(true, null, 'Logged out successfully'));
+}));
+
+// ===================
+// START SERVER
+// ===================
 app.listen(PORT, async () => {
   try {
     await prisma.$connect();
     console.log(`Auth service running on port ${PORT}`);
     console.log('Connected to database successfully');
+    if (process.env.GOOGLE_CLIENT_ID) {
+      console.log('Google OAuth enabled');
+    }
   } catch (error) {
     console.error('Failed to connect to database:', error);
     process.exit(1);
