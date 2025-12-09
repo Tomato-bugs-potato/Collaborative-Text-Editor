@@ -405,6 +405,7 @@ services:
       - DB_REPLICA_2=postgres-replica-2
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
+      - AUTH_SERVICE_URL=http://auth-service-1:3001
     ports:
       - "3002:3002"
     depends_on:
