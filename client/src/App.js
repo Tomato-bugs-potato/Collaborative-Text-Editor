@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import TextEditor from './TextEditor';
 import Auth from './Auth';
+import AuthCallback from './AuthCallback';
 import ShareModal from './ShareModal';
 import {
   BrowserRouter as Router,
@@ -229,7 +230,14 @@ function App() {
   return (
     <Router>
       {!user ? (
-        <Auth onLogin={handleLogin} />
+        <Switch>
+          <Route path="/auth/callback">
+            <AuthCallback onLogin={handleLogin} />
+          </Route>
+          <Route>
+            <Auth onLogin={handleLogin} />
+          </Route>
+        </Switch>
       ) : (
         <Switch>
           <Route path="/" exact>

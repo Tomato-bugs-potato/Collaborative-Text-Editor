@@ -21,6 +21,13 @@ const loginSchema = Joi.object({
   password: Joi.string().required()
 });
 
+// Schema for Google OAuth callback
+const googleAuthSchema = Joi.object({
+    googleId: Joi.string().required(),
+    email: Joi.string().email().required(),
+    name: Joi.string().required()
+});
+
 // Validation middleware factory
 const validate = (schema) => {
   return (req, res, next) => {
@@ -39,5 +46,7 @@ const validate = (schema) => {
 module.exports = {
   validate,
   registerSchema,
-  loginSchema
+    loginSchema,
+    googleAuthSchema,
+    passwordPattern
 };
