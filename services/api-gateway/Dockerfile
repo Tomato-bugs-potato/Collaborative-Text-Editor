@@ -2,10 +2,10 @@ FROM node:18-slim
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY ./api-gateway/package*.json ./
 RUN npm install --omit=dev
 
-COPY . .
+COPY ./api-gateway/ .
 
 EXPOSE 4000
 

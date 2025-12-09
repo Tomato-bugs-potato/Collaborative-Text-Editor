@@ -3,8 +3,6 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('./shared-utils');
 const prisma = require('./shared-utils/prisma-client');
-const swaggerUi = require('swagger-ui-express');
-const swaggerSpecs = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3002;

@@ -28,7 +28,8 @@ export default function TextEditor() {
     }
 
     // Connect to collaboration service through API Gateway
-    const s_socket = io(process.env.REACT_APP_COLLABORATION_URL || 'http://localhost:4000', {
+    const s_socket = io(process.env.REACT_APP_API_URL || 'http://localhost', {
+      transports: ['websocket'],
       auth: {
         token: token
       }
@@ -89,7 +90,7 @@ export default function TextEditor() {
     const loadDocumentContent = async () => {
       try {
         const token = localStorage.getItem('authToken');
-        const response = await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
+        const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -149,7 +150,7 @@ export default function TextEditor() {
       if (text.trim()) { // Only save if there's actual content
         try {
           const token = localStorage.getItem('authToken');
-          const response = await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
+          const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
             method: 'PUT',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -186,7 +187,7 @@ export default function TextEditor() {
       if (text.trim()) {
         try {
           const token = localStorage.getItem('authToken');
-          await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
+          await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
             method: 'PUT',
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -251,7 +252,7 @@ const ToolBarArea = [
   [{ font: [] }], //Default font used in quill
   [{ list: "ordered" }, { list: "bullet" }],
   ["bold", "italic", "underline"],
-  [{ color: ['#ffffff','orange'] }, { background: ['#ffffff'] }],
+  [{ color: ['#ffffff', 'orange'] }, { background: ['#ffffff'] }],
   [{ script: "sub" }, { script: "super" }],
   [{ align: [] }],
   ["image", "blockquote", "code-block"],

@@ -3,7 +3,6 @@ const express = require('express');
 const { Server } = require('socket.io');
 const { Kafka } = require('kafkajs');
 const jwt = require('jsonwebtoken');
-const { createAdapter } = require('@socket.io/redis-adapter');
 const { createRedisClient } = require('./shared-utils/redis-client');
 const prisma = require('./shared-utils/prisma-client');
 

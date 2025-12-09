@@ -2,8 +2,8 @@ FROM node:18
 
 WORKDIR /app
 
-# Copy service manifests from monorepo root context
-COPY services/collaboration-service/package*.json ./
+# Copy package files
+COPY ./collaboration-service/package*.json ./
 
 # Install service dependencies
 RUN npm install --omit=dev
@@ -12,9 +12,14 @@ RUN npm install --omit=dev
 COPY services/shared-utils ./shared-utils
 RUN cd shared-utils && npm install --omit=dev
 
-# Copy Prisma schema and service source
-COPY services/collaboration-service/schema.prisma ./schema.prisma
-COPY services/collaboration-service .
+# Copy shared utils
+COPY ./shared-utils ./shared-utils
+
+# Install shared utils dependencies
+RUN cd ./shared-utils && npm install
+
+# Copy the rest of the application
+COPY ./collaboration-service/ .
 
 # Generate Prisma client (schema push happens at runtime)
 RUN npx prisma generate
