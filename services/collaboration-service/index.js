@@ -28,6 +28,16 @@ const io = new Server({
   }
 });
 
+// Connect Redis clients and attach Socket.IO adapter
+Promise.all([pubClient.connect(), subClient.connect()])
+  .then(() => {
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('Redis adapter connected');
+  })
+  .catch((err) => {
+    console.error('Redis adapter connection error:', err);
+  });
+
 // JWT authentication middleware for sockets
 io.use(async (socket, next) => {
   try {
