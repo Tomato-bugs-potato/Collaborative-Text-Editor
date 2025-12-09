@@ -2,9 +2,8 @@ require("dotenv").config();
 const express = require('express');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { createAdapter } = require('@socket.io/redis-adapter');
-const { createRedisClient } = require('../shared-utils/redis-client');
-const prisma = require('../shared-utils/prisma-client');
+const { createRedisClient } = require('./shared-utils/redis-client');
+const prisma = require('./shared-utils/prisma-client');
 
 const app = express();
 const PORT = process.env.PORT || 3003;

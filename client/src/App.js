@@ -10,8 +10,8 @@ import {
   useHistory
 } from "react-router-dom";
 
-const AUTH_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
-const DOCUMENTS_BASE_URL = process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
+const DOCUMENTS_BASE_URL = `${API_BASE_URL}/api/documents`;
 
 function DocumentList() {
   const [documents, setDocuments] = useState([]);

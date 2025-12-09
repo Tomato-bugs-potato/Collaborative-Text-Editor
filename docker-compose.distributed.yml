@@ -1,0 +1,636 @@
+services:
+
+  postgres-master:
+    image: postgres:15
+    container_name: postgres-master
+    environment:
+      POSTGRES_USER: editor
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: texteditor
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-master-data:/var/lib/postgresql/data
+      - ./postgres-config/master/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgres-config/master/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./postgres-config/master/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U editor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  postgres-replica-1:
+    image: postgres:15
+    container_name: postgres-replica-1
+    environment:
+      POSTGRES_USER: editor
+      POSTGRES_PASSWORD: secret
+      PGUSER: editor
+      POSTGRES_MASTER_HOST: postgres-master
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-replica1-data:/var/lib/postgresql/data
+      - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U editor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  postgres-replica-2:
+    image: postgres:15
+    container_name: postgres-replica-2
+    environment:
+      POSTGRES_USER: editor
+      POSTGRES_PASSWORD: secret
+      PGUSER: editor
+      POSTGRES_MASTER_HOST: postgres-master
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-replica2-data:/var/lib/postgresql/data
+      - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U editor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  kafka-1:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-1
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092
+      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_DEFULT_REPLICATION_FACTOR: 3
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+  
+  kafka-2:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-2
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9093:9093"
+      - "29093:29093"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9093
+      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_DEFULT_REPLICATION_FACTOR: 3
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+  
+  kafka-3:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-3
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9094:9094"
+      - "29094:29094"
+    environment:
+      KAFKA_BOOKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9094
+      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_DEFULT_REPLICATION_FACTOR: 3
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9094"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+  
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: distributed_cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:9092, kafka-2:9093, kafka-3:9094
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    depends_on:
+      - kafka-1
+      - kafka-2
+      - kafka-3
+    networks:
+      - distributed-network
+
+  redis-node-1:
+    image: redis:7-alpine
+    container_name: redis-node-1
+    command: redis-server --port 7001 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "7001:7001"
+    volumes:
+      - redis-node-1-data:/data
+    networks:
+      - distributed-network
+
+  redis-node-2:
+    image: redis:7-alpine
+    container_name: redis-node-2
+    command: redis-server --port 7002 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "7002:7002"
+    volumes:
+      - redis-node-2-data:/data
+    networks:
+      - distributed-network
+
+  redis-node-3:
+    image: redis:7-alpine
+    container_name: redis-node-3
+    command: redis-server --port 7003 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "7003:7003"
+    volumes:
+      - redis-node-3-data:/data
+    networks:
+      - distributed-network
+
+  redis-node-4:
+    image: redis:7-alpine
+    container_name: redis-node-4
+    command: redis-server --port 7004 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "7004:7004"
+    volumes:
+      - redis-node-4-data:/data
+    networks:
+      - distributed-network
+
+  redis-node-5:
+    image: redis:7-alpine
+    container_name: redis-node-5
+    command: redis-server --port 7005 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "7005:7005"
+    volumes:
+      - redis-node-5-data:/data
+    networks:
+      - distributed-network
+
+  redis-node-6:
+    image: redis:7-alpine
+    container_name: redis-node-6
+    command: redis-server --port 7006 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "7006:7006"
+    volumes:
+      - redis-node-6-data:/data
+    networks:
+      - distributed-network
+
+  redis-cluster-init:
+    image: redis:7-alpine
+    container_name: redis-cluster-init
+    command: >
+      sh -c "sleep 10 && echo 'yes' | redis-cli --cluster create
+      redis-node-1:7001
+      redis-node-2:7002
+      redis-node-3:7003
+      redis-node-4:7004
+      redis-node-5:7005
+      redis-node-6:7006
+      --cluster-replicas 1"
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+    networks:
+      - distributed-network
+  
+  api-gateway-1:
+    build:
+      context: ./services
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway-1
+    environment:
+      - PORT=4000
+      - INSTANCE_ID=gateway-1
+      - DB_HOST=postgres-master
+      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+      - AUTH_SERVICE_URL=http://auth-service-1:3001,http://auth-service-2:3001
+      - DOCUMENT_SERVICE_URL=http://document-service-1:3002,http://document-service-2:3002
+      - COLLABORATION_SERVICE_URL=http://collaboration-service-1:3003,http://collaboration-service-2:3003,http://collaboration-service-3:3003
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  api-gateway-2:
+    build:
+      context: ./services
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway-2
+    environment:
+      - PORT=4000
+      - INSTANCE_ID=gateway-2
+      - DB_HOST=postgres-master
+      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+      - AUTH_SERVICE_URL=http://auth-service-1:3001,http://auth-service-2:3001
+      - DOCUMENT_SERVICE_URL=http://document-service-1:3002,http://document-service-2:3002
+      - COLLABORATION_SERVICE_URL=http://collaboration-service-1:3003,http://collaboration-service-2:3003,http://collaboration-service-3:3003
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "4001:4000"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  auth-service-1:
+    build:
+      context: ./services
+      dockerfile: auth-service/Dockerfile
+    container_name: auth-service-1
+    environment:
+      - PORT=3001
+      - INSTANCE_ID=auth-1
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  auth-service-2:
+    build:
+      context: ./services
+      dockerfile: auth-service/Dockerfile
+    container_name: auth-service-2
+    environment:
+      - PORT=3001
+      - INSTANCE_ID=auth-2
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "3011:3001"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  document-service-1:
+    build:
+      context: ./services
+      dockerfile: document-service/Dockerfile
+    container_name: document-service-1
+    environment:
+      - PORT=3002
+      - INSTANCE_ID=doc-1
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_docs
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+      - JWT_SECRET=your-super-secret-jwt-key
+      - AUTH_SERVICE_URL=http://auth-service-1:3001
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  document-service-2:
+    build:
+      context: ./services
+      dockerfile: document-service/Dockerfile
+    container_name: document-service-2
+    environment:
+      - PORT=3002
+      - INSTANCE_ID=doc-2
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_docs
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "3012:3002"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  collaboration-service-1:
+    build:
+      context: ./services
+      dockerfile: collaboration-service/Dockerfile
+    container_name: collaboration-service-1
+    environment:
+      - PORT=3003
+      - INSTANCE_ID=collab-1
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "3003:3003"
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      redis-node-1:
+        condition: service_started
+    networks:
+      - distributed-network
+
+  collaboration-service-2:
+    build:
+      context: ./services
+      dockerfile: collaboration-service/Dockerfile
+    container_name: collaboration-service-2
+    environment:
+      - PORT=3003
+      - INSTANCE_ID=collab-2
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "3013:3003"
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      redis-node-1:
+        condition: service_started
+    networks:
+      - distributed-network
+
+  collaboration-service-3:
+    build:
+      context: ./services
+      dockerfile: collaboration-service/Dockerfile
+    container_name: collaboration-service-3
+    environment:
+      - PORT=3003
+      - INSTANCE_ID=collab-3
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+      - JWT_SECRET=your-super-secret-jwt-key
+    ports:
+      - "3023:3003"
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      redis-node-1:
+        condition: service_started
+    networks:
+      - distributed-network
+
+  reconciliation-service-1:
+    build:
+      context: ./services
+      dockerfile: reconciliation-service/Dockerfile
+    container_name: reconciliation-service-1
+    environment:
+      - INSTANCE_ID=reconcile-1
+      - CONSUMER_GROUP=reconciliation-group
+      - DB_HOST=postgres-master
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    restart: unless-stopped
+
+  reconciliation-service-2:
+    build:
+      context: ./services
+      dockerfile: reconciliation-service/Dockerfile
+    container_name: reconciliation-service-2
+    environment:
+      - INSTANCE_ID=reconcile-2
+      - CONSUMER_GROUP=reconciliation-group
+      - DB_HOST=postgres-master
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-lb
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api-gateway-1:
+        condition: service_healthy
+      api-gateway-2:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    healthcheck:
+      test: ["CMD", "pgrep", "nginx"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+
+  client:
+    build:
+      context: ./client
+      args:
+        REACT_APP_API_URL: http://localhost
+    container_name: texteditor-client
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      nginx:
+        condition: service_healthy
+    networks:
+      - distributed-network
+
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - distributed-network
+    profiles:
+      - tools
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: node1:redis-node-1:7001,node2:redis-node-2:7002,node3:redis-node-3:7003,node4:redis-node-4:7004,node5:redis-node-5:7005,node6:redis-node-6:7006
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis-cluster-init
+    networks:
+      - distributed-network
+    profiles:
+      - tools
+
+networks:
+  distributed-network:
+    driver: bridge
+
+volumes:
+  postgres-master-data:
+  postgres-replica1-data:
+  postgres-replica2-data:
+  redis-node-1-data:
+  redis-node-2-data:
+  redis-node-3-data:
+  redis-node-4-data:
+  redis-node-5-data:
+  redis-node-6-data:
