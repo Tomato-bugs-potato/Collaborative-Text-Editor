@@ -27,7 +27,7 @@ function DocumentList() {
   const fetchDocuments = async () => {
     try {
       const token = localStorage.getItem('authToken');
-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents`, {
+      const response = await fetch(DOCUMENTS_BASE_URL, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -47,7 +47,7 @@ function DocumentList() {
   const createDocument = async () => {
     try {
       const token = localStorage.getItem('authToken');
-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents`, {
+      const response = await fetch(DOCUMENTS_BASE_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -194,7 +194,7 @@ function App() {
       if (token && userData) {
         try {
           // Validate token by making a request to a protected endpoint
-          const response = await fetch(`${DOCUMENTS_BASE_URL}/documents`, {
+          const response = await fetch(DOCUMENTS_BASE_URL, {
             headers: {
               'Authorization': `Bearer ${token}`
             }

@@ -6,10 +6,17 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["microservices", "shared", "utils", "common"],
+  "keywords": [
+    "microservices",
+    "shared",
+    "utils",
+    "common"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "kafkajs": "^2.2.4",
+    "redis": "^4.6.7"
   }
 }
