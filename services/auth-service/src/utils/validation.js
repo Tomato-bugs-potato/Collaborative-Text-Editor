@@ -23,15 +23,15 @@ const loginSchema = Joi.object({
 
 // Schema for Google OAuth callback
 const googleAuthSchema = Joi.object({
-    googleId: Joi.string().required(),
-    email: Joi.string().email().required(),
-    name: Joi.string().required()
+  googleId: Joi.string().required(),
+  email: Joi.string().email().required(),
+  name: Joi.string().required()
 });
 
 // Validation middleware factory
 const validate = (schema) => {
   return (req, res, next) => {
-    const { error, value } = schema.validate(req.body, { abortEarly: false });
+    const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
 
     if (error) {
       const errorMessage = error.details.map((detail) => detail.message).join(', ');
@@ -46,7 +46,7 @@ const validate = (schema) => {
 module.exports = {
   validate,
   registerSchema,
-    loginSchema,
-    googleAuthSchema,
-    passwordPattern
+  loginSchema,
+  googleAuthSchema,
+  passwordPattern
 };
