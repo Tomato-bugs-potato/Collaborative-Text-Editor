@@ -1,0 +1,57 @@
+From e6091e4faff6266feb938c7143f480d9af02eb41 Mon Sep 17 00:00:00 2001
+From: MichaelWorkineh_git <micwor96@gmail.com>
+Date: Fri, 5 Dec 2025 23:14:29 +0300
+Subject: [PATCH 06/12] fix: validation fix for login
+
+---
+ client/src/ShareModal.js                      | 6 +++---
+ services/auth-service/src/utils/validation.js | 2 +-
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/client/src/ShareModal.js b/client/src/ShareModal.js
+index dc22d0d..7487719 100644
+--- a/client/src/ShareModal.js
++++ b/client/src/ShareModal.js
+@@ -19,7 +19,7 @@ export default function ShareModal({ documentId, onClose }) {
+   const loadCollaborators = async () => {
+     try {
+       const token = localStorage.getItem('authToken');
+-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents/${documentId}`, {
++      const response = await fetch(`${DOCUMENTS_BASE_URL}/${documentId}`, {
+         headers: {
+           'Authorization': `Bearer ${token}`
+         }
+@@ -72,7 +72,7 @@ export default function ShareModal({ documentId, onClose }) {
+       setLoading(true);
+       const token = localStorage.getItem('authToken');
+ 
+-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents/${documentId}/collaborators`, {
++      const response = await fetch(`${DOCUMENTS_BASE_URL}/${documentId}/collaborators`, {
+         method: 'POST',
+         headers: {
+           'Authorization': `Bearer ${token}`,
+@@ -110,7 +110,7 @@ export default function ShareModal({ documentId, onClose }) {
+       setLoading(true);
+       const token = localStorage.getItem('authToken');
+ 
+-      const response = await fetch(`${DOCUMENTS_BASE_URL}/documents/${documentId}/collaborators/${userId}`, {
++      const response = await fetch(`${DOCUMENTS_BASE_URL}/${documentId}/collaborators/${userId}`, {
+         method: 'DELETE',
+         headers: {
+           'Authorization': `Bearer ${token}`
+diff --git a/services/auth-service/src/utils/validation.js b/services/auth-service/src/utils/validation.js
+index 6169e9d..29c2e27 100644
+--- a/services/auth-service/src/utils/validation.js
++++ b/services/auth-service/src/utils/validation.js
+@@ -21,7 +21,7 @@ const loginSchema = Joi.object({
+ // Validation middleware factory
+ const validate = (schema) => {
+     return (req, res, next) => {
+-        const { error, value } = schema.validate(req.body, { abortEarly: false });
++        const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
+ 
+         if (error) {
+             const errorMessage = error.details.map(detail => detail.message).join(', ');
+-- 
+2.44.0.windows.1
+

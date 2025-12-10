@@ -1,0 +1,1541 @@
+From 1b04894dfa025678686523911d3eee138c05bcfd Mon Sep 17 00:00:00 2001
+From: MichaelGetu-git <michaelgetu21@gmail.com>
+Date: Thu, 4 Dec 2025 22:44:08 +0300
+Subject: [PATCH 01/12] update: database clustering and distributed services
+ setup
+
+---
+ client/src/App.js                            |   4 +-
+ client/src/Auth.js                           |   2 +-
+ client/src/ShareModal.js                     |   5 +-
+ client/src/TextEditor.js                     |  10 +-
+ docker-compose.distributed.yml               | 635 +++++++++++++++++++
+ nginx/nginx.conf                             |  44 ++
+ postgres-config/master/init-replication.sh   |  21 +
+ postgres-config/master/pg_hba.conf           |  13 +
+ postgres-config/master/postgresql.conf       |  30 +
+ postgres-config/replica/postgresql.conf      |  31 +
+ postgres-config/replica/setup-replica.sh     |  33 +
+ services/api-gateway/Dockerfile              |   4 +-
+ services/api-gateway/index.js                | 121 ++--
+ services/auth-service/Dockerfile             |  10 +-
+ services/auth-service/index.js               |   4 +-
+ services/auth-service/package.json           |   8 +-
+ services/collaboration-service/Dockerfile    |  10 +-
+ services/collaboration-service/index.js      |   4 +-
+ services/collaboration-service/package.json  |   8 +-
+ services/document-service/Dockerfile         |  10 +-
+ services/document-service/index.js           |   4 +-
+ services/document-service/package.json       |   8 +-
+ services/reconciliation-service/Dockerfile   |  23 +
+ services/reconciliation-service/index.js     | 101 +++
+ services/reconciliation-service/package.json |  17 +
+ 25 files changed, 1055 insertions(+), 105 deletions(-)
+ create mode 100644 docker-compose.distributed.yml
+ create mode 100644 nginx/nginx.conf
+ create mode 100644 postgres-config/master/init-replication.sh
+ create mode 100644 postgres-config/master/pg_hba.conf
+ create mode 100644 postgres-config/master/postgresql.conf
+ create mode 100644 postgres-config/replica/postgresql.conf
+ create mode 100644 postgres-config/replica/setup-replica.sh
+ create mode 100644 services/reconciliation-service/Dockerfile
+ create mode 100644 services/reconciliation-service/index.js
+ create mode 100644 services/reconciliation-service/package.json
+
+diff --git a/client/src/App.js b/client/src/App.js
+index 1d7085c..73d57d7 100644
+--- a/client/src/App.js
++++ b/client/src/App.js
+@@ -10,8 +10,8 @@ import {
+   useHistory
+ } from "react-router-dom";
+ 
+-const AUTH_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+-const DOCUMENTS_BASE_URL = process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002';
++const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
++const DOCUMENTS_BASE_URL = `${API_BASE_URL}/api/documents`;
+ 
+ function DocumentList() {
+   const [documents, setDocuments] = useState([]);
+diff --git a/client/src/Auth.js b/client/src/Auth.js
+index 8ba66eb..4f52149 100644
+--- a/client/src/Auth.js
++++ b/client/src/Auth.js
+@@ -25,7 +25,7 @@ export default function Auth({ onLogin }) {
+     setError('');
+ 
+     try {
+-      const endpoint = isLogin ? '/login' : '/register';
++      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+         method: 'POST',
+         headers: {
+diff --git a/client/src/ShareModal.js b/client/src/ShareModal.js
+index 35ff051..dc22d0d 100644
+--- a/client/src/ShareModal.js
++++ b/client/src/ShareModal.js
+@@ -1,7 +1,8 @@
+ import React, { useState, useEffect } from 'react';
+ 
+-const AUTH_BASE_URL = process.env.REACT_APP_AUTH_URL || 'http://localhost:3001';
+-const DOCUMENTS_BASE_URL = process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002';
++const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
++const AUTH_BASE_URL = `${API_BASE_URL}/api/auth`;
++const DOCUMENTS_BASE_URL = `${API_BASE_URL}/api/documents`;
+ 
+ export default function ShareModal({ documentId, onClose }) {
+   const [searchTerm, setSearchTerm] = useState('');
+diff --git a/client/src/TextEditor.js b/client/src/TextEditor.js
+index 79e9810..f8d7a09 100644
+--- a/client/src/TextEditor.js
++++ b/client/src/TextEditor.js
+@@ -28,7 +28,7 @@ export default function TextEditor() {
+     }
+ 
+     // Connect to collaboration service through API Gateway
+-    const s_socket = io(process.env.REACT_APP_COLLABORATION_URL || 'http://localhost:4000', {
++    const s_socket = io(process.env.REACT_APP_API_URL || 'http://localhost', {
+       auth: {
+         token: token
+       }
+@@ -89,7 +89,7 @@ export default function TextEditor() {
+     const loadDocumentContent = async () => {
+       try {
+         const token = localStorage.getItem('authToken');
+-        const response = await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
++        const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
+           headers: {
+             'Authorization': `Bearer ${token}`
+           }
+@@ -149,7 +149,7 @@ export default function TextEditor() {
+       if (text.trim()) { // Only save if there's actual content
+         try {
+           const token = localStorage.getItem('authToken');
+-          const response = await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
++          const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
+             method: 'PUT',
+             headers: {
+               'Authorization': `Bearer ${token}`,
+@@ -186,7 +186,7 @@ export default function TextEditor() {
+       if (text.trim()) {
+         try {
+           const token = localStorage.getItem('authToken');
+-          await fetch(`${process.env.REACT_APP_DOCUMENTS_URL || 'http://localhost:3002'}/documents/${id_doc}`, {
++          await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
+             method: 'PUT',
+             headers: {
+               'Authorization': `Bearer ${token}`,
+@@ -251,7 +251,7 @@ const ToolBarArea = [
+   [{ font: [] }], //Default font used in quill
+   [{ list: "ordered" }, { list: "bullet" }],
+   ["bold", "italic", "underline"],
+-  [{ color: ['#ffffff','orange'] }, { background: ['#ffffff'] }],
++  [{ color: ['#ffffff', 'orange'] }, { background: ['#ffffff'] }],
+   [{ script: "sub" }, { script: "super" }],
+   [{ align: [] }],
+   ["image", "blockquote", "code-block"],
+diff --git a/docker-compose.distributed.yml b/docker-compose.distributed.yml
+new file mode 100644
+index 0000000..6514c41
+--- /dev/null
++++ b/docker-compose.distributed.yml
+@@ -0,0 +1,635 @@
++services:
++
++  postgres-master:
++    image: postgres:15
++    container_name: postgres-master
++    environment:
++      POSTGRES_USER: editor
++      POSTGRES_PASSWORD: secret
++      POSTGRES_DB: texteditor
++      POSTGRES_INITDB_ARGS: "-E UTF8"
++    ports:
++      - "5432:5432"
++    volumes:
++      - postgres-master-data:/var/lib/postgresql/data
++      - ./postgres-config/master/postgresql.conf:/etc/postgresql/postgresql.conf
++      - ./postgres-config/master/pg_hba.conf:/etc/postgresql/pg_hba.conf
++      - ./postgres-config/master/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh
++    command: postgres -c config_file=/etc/postgresql/postgresql.conf
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U editor"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++  
++  postgres-replica-1:
++    image: postgres:15
++    container_name: postgres-replica-1
++    environment:
++      POSTGRES_USER: editor
++      POSTGRES_PASSWORD: secret
++      PGUSER: editor
++      POSTGRES_MASTER_HOST: postgres-master
++    ports:
++      - "5433:5432"
++    volumes:
++      - postgres-replica1-data:/var/lib/postgresql/data
++      - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
++      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
++    command: postgres -c config_file=/etc/postgresql/postgresql.conf
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U editor"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++  postgres-replica-2:
++    image: postgres:15
++    container_name: postgres-replica-2
++    environment:
++      POSTGRES_USER: editor
++      POSTGRES_PASSWORD: secret
++      PGUSER: editor
++      POSTGRES_MASTER_HOST: postgres-master
++    ports:
++      - "5434:5432"
++    volumes:
++      - postgres-replica2-data:/var/lib/postgresql/data
++      - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
++      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
++    command: postgres -c config_file=/etc/postgresql/postgresql.conf
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U editor"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++
++  zookeeper:
++    image: confluentinc/cp-zookeeper:7.5.0
++    container_name: zookeeper
++    environment:
++      ZOOKEEPER_CLIENT_PORT: 2181
++      ZOOKEEPER_TICK_TIME: 2000
++    ports:
++      - "2181:2181"
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "nc", "-z", "localhost", "2181"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++  
++  kafka-1:
++    image: confluentinc/cp-kafka:7.5.0
++    container_name: kafka-1
++    depends_on:
++      zookeeper:
++        condition: service_healthy
++    ports:
++      - "9092:9092"
++      - "29092:29092"
++    environment:
++      KAFKA_BROKER_ID: 1
++      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
++      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092
++      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
++      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
++      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
++      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
++      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
++      KAFKA_MIN_INSYNC_REPLICAS: 2
++      KAFKA_DEFULT_REPLICATION_FACTOR: 3
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
++      interval: 10s
++      timeout: 10s
++      retries: 5
++  
++  kafka-2:
++    image: confluentinc/cp-kafka:7.5.0
++    container_name: kafka-2
++    depends_on:
++      zookeeper:
++        condition: service_healthy
++    ports:
++      - "9093:9093"
++      - "29093:29093"
++    environment:
++      KAFKA_BROKER_ID: 2
++      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
++      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9093
++      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
++      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
++      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
++      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
++      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
++      KAFKA_MIN_INSYNC_REPLICAS: 2
++      KAFKA_DEFULT_REPLICATION_FACTOR: 3
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
++      interval: 10s
++      timeout: 10s
++      retries: 5
++  
++  kafka-3:
++    image: confluentinc/cp-kafka:7.5.0
++    container_name: kafka-3
++    depends_on:
++      zookeeper:
++        condition: service_healthy
++    ports:
++      - "9094:9094"
++      - "29094:29094"
++    environment:
++      KAFKA_BOOKER_ID: 1
++      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
++      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9094
++      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
++      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
++      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
++      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
++      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
++      KAFKA_MIN_INSYNC_REPLICAS: 2
++      KAFKA_DEFULT_REPLICATION_FACTOR: 3
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9094"]
++      interval: 10s
++      timeout: 10s
++      retries: 5
++  
++  kafka-ui:
++    image: provectuslabs/kafka-ui:latest
++    container_name: kafka-ui
++    ports:
++      - "8080:8080"
++    environment:
++      KAFKA_CLUSTERS_0_NAME: distributed_cluster
++      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:9092, kafka-2:9093, kafka-3:9094
++      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
++    depends_on:
++      - kafka-1
++      - kafka-2
++      - kafka-3
++    networks:
++      - distributed-network
++
++  redis-node-1:
++    image: redis:7-alpine
++    container_name: redis-node-1
++    command: redis-server --port 7001 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
++    ports:
++      - "7001:7001"
++    volumes:
++      - redis-node-1-data:/data
++    networks:
++      - distributed-network
++
++  redis-node-2:
++    image: redis:7-alpine
++    container_name: redis-node-2
++    command: redis-server --port 7002 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
++    ports:
++      - "7002:7002"
++    volumes:
++      - redis-node-2-data:/data
++    networks:
++      - distributed-network
++
++  redis-node-3:
++    image: redis:7-alpine
++    container_name: redis-node-3
++    command: redis-server --port 7003 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
++    ports:
++      - "7003:7003"
++    volumes:
++      - redis-node-3-data:/data
++    networks:
++      - distributed-network
++
++  redis-node-4:
++    image: redis:7-alpine
++    container_name: redis-node-4
++    command: redis-server --port 7004 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
++    ports:
++      - "7004:7004"
++    volumes:
++      - redis-node-4-data:/data
++    networks:
++      - distributed-network
++
++  redis-node-5:
++    image: redis:7-alpine
++    container_name: redis-node-5
++    command: redis-server --port 7005 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
++    ports:
++      - "7005:7005"
++    volumes:
++      - redis-node-5-data:/data
++    networks:
++      - distributed-network
++
++  redis-node-6:
++    image: redis:7-alpine
++    container_name: redis-node-6
++    command: redis-server --port 7006 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
++    ports:
++      - "7006:7006"
++    volumes:
++      - redis-node-6-data:/data
++    networks:
++      - distributed-network
++
++  redis-cluster-init:
++    image: redis:7-alpine
++    container_name: redis-cluster-init
++    command: >
++      sh -c "sleep 10 && echo 'yes' | redis-cli --cluster create
++      redis-node-1:7001
++      redis-node-2:7002
++      redis-node-3:7003
++      redis-node-4:7004
++      redis-node-5:7005
++      redis-node-6:7006
++      --cluster-replicas 1"
++    depends_on:
++      - redis-node-1
++      - redis-node-2
++      - redis-node-3
++      - redis-node-4
++      - redis-node-5
++      - redis-node-6
++    networks:
++      - distributed-network
++  
++  api-gateway-1:
++    build:
++      context: ./services
++      dockerfile: api-gateway/Dockerfile
++    container_name: api-gateway-1
++    environment:
++      - PORT=4000
++      - INSTANCE_ID=gateway-1
++      - DB_HOST=postgres-master
++      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++      - AUTH_SERVICE_URL=http://auth-service-1:3001,http://auth-service-2:3001
++      - DOCUMENT_SERVICE_URL=http://document-service-1:3002,http://document-service-2:3002
++      - COLLABORATION_SERVICE_URL=http://collaboration-service-1:3003,http://collaboration-service-2:3003,http://collaboration-service-3:3003
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "4000:4000"
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++      kafka-1:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
++      interval: 10s
++      timeout: 5s
++      retries: 3
++
++  api-gateway-2:
++    build:
++      context: ./services
++      dockerfile: api-gateway/Dockerfile
++    container_name: api-gateway-2
++    environment:
++      - PORT=4000
++      - INSTANCE_ID=gateway-2
++      - DB_HOST=postgres-master
++      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++      - AUTH_SERVICE_URL=http://auth-service-1:3001,http://auth-service-2:3001
++      - DOCUMENT_SERVICE_URL=http://document-service-1:3002,http://document-service-2:3002
++      - COLLABORATION_SERVICE_URL=http://collaboration-service-1:3003,http://collaboration-service-2:3003,http://collaboration-service-3:3003
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "4001:4000"
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++      kafka-1:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
++      interval: 10s
++      timeout: 5s
++      retries: 3
++
++  auth-service-1:
++    build:
++      context: ./services
++      dockerfile: auth-service/Dockerfile
++    container_name: auth-service-1
++    environment:
++      - PORT=3001
++      - INSTANCE_ID=auth-1
++      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
++      - DB_HOST=postgres-master
++      - DB_REPLICA_1=postgres-replica-1
++      - DB_REPLICA_2=postgres-replica-2
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "3001:3001"
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
++      interval: 30s
++      timeout: 10s
++      retries: 3
++
++  auth-service-2:
++    build:
++      context: ./services
++      dockerfile: auth-service/Dockerfile
++    container_name: auth-service-2
++    environment:
++      - PORT=3001
++      - INSTANCE_ID=auth-2
++      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
++      - DB_HOST=postgres-master
++      - DB_REPLICA_1=postgres-replica-1
++      - DB_REPLICA_2=postgres-replica-2
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "3011:3001"
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
++      interval: 30s
++      timeout: 10s
++      retries: 3
++
++  document-service-1:
++    build:
++      context: ./services
++      dockerfile: document-service/Dockerfile
++    container_name: document-service-1
++    environment:
++      - PORT=3002
++      - INSTANCE_ID=doc-1
++      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
++      - DB_HOST=postgres-master
++      - DB_REPLICA_1=postgres-replica-1
++      - DB_REPLICA_2=postgres-replica-2
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "3002:3002"
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++      kafka-1:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
++      interval: 30s
++      timeout: 10s
++      retries: 3
++
++  document-service-2:
++    build:
++      context: ./services
++      dockerfile: document-service/Dockerfile
++    container_name: document-service-2
++    environment:
++      - PORT=3002
++      - INSTANCE_ID=doc-2
++      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
++      - DB_HOST=postgres-master
++      - DB_REPLICA_1=postgres-replica-1
++      - DB_REPLICA_2=postgres-replica-2
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "3012:3002"
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++      kafka-1:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/health"]
++      interval: 30s
++      timeout: 10s
++      retries: 3
++
++  collaboration-service-1:
++    build:
++      context: ./services
++      dockerfile: collaboration-service/Dockerfile
++    container_name: collaboration-service-1
++    environment:
++      - PORT=3003
++      - INSTANCE_ID=collab-1
++      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
++      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "3003:3003"
++    depends_on:
++      kafka-1:
++        condition: service_healthy
++      redis-node-1:
++        condition: service_started
++    networks:
++      - distributed-network
++
++  collaboration-service-2:
++    build:
++      context: ./services
++      dockerfile: collaboration-service/Dockerfile
++    container_name: collaboration-service-2
++    environment:
++      - PORT=3003
++      - INSTANCE_ID=collab-2
++      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
++      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "3013:3003"
++    depends_on:
++      kafka-1:
++        condition: service_healthy
++      redis-node-1:
++        condition: service_started
++    networks:
++      - distributed-network
++
++  collaboration-service-3:
++    build:
++      context: ./services
++      dockerfile: collaboration-service/Dockerfile
++    container_name: collaboration-service-3
++    environment:
++      - PORT=3003
++      - INSTANCE_ID=collab-3
++      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor
++      - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++      - JWT_SECRET=your-super-secret-jwt-key
++    ports:
++      - "3023:3003"
++    depends_on:
++      kafka-1:
++        condition: service_healthy
++      redis-node-1:
++        condition: service_started
++    networks:
++      - distributed-network
++
++  reconciliation-service-1:
++    build:
++      context: ./services
++      dockerfile: reconciliation-service/Dockerfile
++    container_name: reconciliation-service-1
++    environment:
++      - INSTANCE_ID=reconcile-1
++      - CONSUMER_GROUP=reconciliation-group
++      - DB_HOST=postgres-master
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++      kafka-1:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    restart: unless-stopped
++
++  reconciliation-service-2:
++    build:
++      context: ./services
++      dockerfile: reconciliation-service/Dockerfile
++    container_name: reconciliation-service-2
++    environment:
++      - INSTANCE_ID=reconcile-2
++      - CONSUMER_GROUP=reconciliation-group
++      - DB_HOST=postgres-master
++      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
++    depends_on:
++      postgres-master:
++        condition: service_healthy
++      kafka-1:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    restart: unless-stopped
++
++  nginx:
++    image: nginx:alpine
++    container_name: nginx-lb
++    ports:
++      - "80:80"
++      - "443:443"
++    volumes:
++      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
++    depends_on:
++      api-gateway-1:
++        condition: service_healthy
++      api-gateway-2:
++        condition: service_healthy
++    networks:
++      - distributed-network
++    healthcheck:
++      test: ["CMD", "pgrep", "nginx"]
++      interval: 10s
++      timeout: 5s
++      retries: 3
++
++
++  client:
++    build:
++      context: ./client
++      args:
++        REACT_APP_API_URL: http://localhost
++    container_name: texteditor-client
++    restart: unless-stopped
++    ports:
++      - "3000:80"
++    depends_on:
++      nginx:
++        condition: service_healthy
++    networks:
++      - distributed-network
++
++
++  pgadmin:
++    image: dpage/pgadmin4:latest
++    container_name: pgadmin
++    environment:
++      PGADMIN_DEFAULT_EMAIL: admin@admin.com
++      PGADMIN_DEFAULT_PASSWORD: admin
++    ports:
++      - "5050:80"
++    networks:
++      - distributed-network
++    profiles:
++      - tools
++
++  redis-commander:
++    image: rediscommander/redis-commander:latest
++    container_name: redis-commander
++    restart: unless-stopped
++    environment:
++      REDIS_HOSTS: node1:redis-node-1:7001,node2:redis-node-2:7002,node3:redis-node-3:7003,node4:redis-node-4:7004,node5:redis-node-5:7005,node6:redis-node-6:7006
++    ports:
++      - "8081:8081"
++    depends_on:
++      - redis-cluster-init
++    networks:
++      - distributed-network
++    profiles:
++      - tools
++
++networks:
++  distributed-network:
++    driver: bridge
++
++volumes:
++  postgres-master-data:
++  postgres-replica1-data:
++  postgres-replica2-data:
++  redis-node-1-data:
++  redis-node-2-data:
++  redis-node-3-data:
++  redis-node-4-data:
++  redis-node-5-data:
++  redis-node-6-data:
+\ No newline at end of file
+diff --git a/nginx/nginx.conf b/nginx/nginx.conf
+new file mode 100644
+index 0000000..86d2457
+--- /dev/null
++++ b/nginx/nginx.conf
+@@ -0,0 +1,44 @@
++events {
++    worker_connections 1024;
++}
++
++http {
++    upstream api_gateway {
++        least_conn;
++        server api-gateway-1:4000 max_fails=3 fail_timeout=30s;
++        server api-gateway-2:4000 max_fails=3 fail_timeout=30s;
++    }
++
++    server {
++        listen 80;
++        server_name localhost;
++
++        location /health {
++            access_log off;
++            return 200 "healthy\n";
++            add_header Content-Type text/plain;
++        }
++
++        location / {
++            proxy_pass http://api_gateway;
++            proxy_http_version 1.1;
++
++            proxy_set_header Upgrade $http_upgrade;
++            proxy_set_header Connection "upgrade";
++
++            proxy_set_header Host $host;
++            proxy_set_header X-Real-IP $remote_addr;
++            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++            proxy_set_header X-Forwarded-Proto $scheme;
++
++            proxy_connect_timeout 60s;
++            proxy_send_timeout 60s;
++            proxy_read_timeout 60s;
++
++            proxy_buffering on;
++            proxy_buffer_size 4k;
++            proxy_buffers 8 4k;
++            proxy_busy_buffers_size 8k;
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/postgres-config/master/init-replication.sh b/postgres-config/master/init-replication.sh
+new file mode 100644
+index 0000000..06b0a41
+--- /dev/null
++++ b/postgres-config/master/init-replication.sh
+@@ -0,0 +1,21 @@
++#!/bin/bash
++set -e
++
++echo "Initializing PostgreSQL master for replication"
++
++# Create replication user
++psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
++    -- Create replication user if it doesn't exist
++    DO \$\$
++    BEGIN
++        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'replicator') THEN
++            CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'replicator_password';
++        END IF;
++    END
++    \$\$;
++    
++    -- Grant necessary permissions
++    GRANT CONNECT ON DATABASE $POSTGRES_DB TO replicator;
++EOSQL
++
++echo "Master replication setup completed"
+\ No newline at end of file
+diff --git a/postgres-config/master/pg_hba.conf b/postgres-config/master/pg_hba.conf
+new file mode 100644
+index 0000000..c746cb2
+--- /dev/null
++++ b/postgres-config/master/pg_hba.conf
+@@ -0,0 +1,13 @@
++
++# TYPE  DATABASE        USER            ADDRESS                 METHOD
++# Local connections
++local   all             all                                     trust
++host    all             all             127.0.0.1/32            trust
++host    all             all             ::1/128                 trust
++
++# Allow replication connections from replicas
++host    replication     all             0.0.0.0/0               trust
++host    replication     all             ::0/0                   trust
++
++# Allow all database connections from Docker network
++host    all             all             0.0.0.0/0               md5
+\ No newline at end of file
+diff --git a/postgres-config/master/postgresql.conf b/postgres-config/master/postgresql.conf
+new file mode 100644
+index 0000000..0797eb4
+--- /dev/null
++++ b/postgres-config/master/postgresql.conf
+@@ -0,0 +1,30 @@
++# Connection Settings
++listen_addresses = '*'
++max_connections = 100
++
++# Replication
++wal_level = replica
++max_wal_senders = 10
++max_replication_slots = 10
++wal_keep_size = 64MB
++hot_standby = on
++
++# Logging
++logging_collector = on
++log_directory = 'log'
++log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
++log_statement = 'mod'
++log_replication_commands = on
++
++# Performance
++shared_buffers = 256MB
++effective_cache_size = 1GB
++maintenance_work_mem = 64MB
++checkpoint_completion_target = 0.9
++wal_buffers = 16MB
++default_statistics_target = 100
++random_page_cost = 1.1
++effective_io_concurrency = 100
++work_mem = 4MB
++min_wal_size = 1GB
++max_wal_size = 4GB
+diff --git a/postgres-config/replica/postgresql.conf b/postgres-config/replica/postgresql.conf
+new file mode 100644
+index 0000000..c97d971
+--- /dev/null
++++ b/postgres-config/replica/postgresql.conf
+@@ -0,0 +1,31 @@
++# Connection Settings
++listen_addresses = '*'
++max_connections = 100
++
++# Replication Settings
++wal_level = replica
++hot_standby = on
++max_wal_senders = 10
++max_replication_slots = 10
++wal_keep_size = 64MB
++
++# Read-only mode
++hot_standby_feedback = on
++max_standby_streaming_delay = 30s
++
++# Logging
++logging_collector = on
++log_directory = 'log'
++log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
++log_statement = 'mod'
++
++# Performance
++shared_buffers = 256MB
++effective_cache_size = 1GB
++maintenance_work_mem = 64MB
++checkpoint_completion_target = 0.9
++wal_buffers = 16MB
++default_statistics_target = 100
++random_page_cost = 1.1
++effective_io_concurrency = 200
++work_mem = 4MB
+\ No newline at end of file
+diff --git a/postgres-config/replica/setup-replica.sh b/postgres-config/replica/setup-replica.sh
+new file mode 100644
+index 0000000..205b695
+--- /dev/null
++++ b/postgres-config/replica/setup-replica.sh
+@@ -0,0 +1,33 @@
++#!/bin/bash
++set -e
++
++echo "Setting up PostgreSQL replica"
++
++# Wait for master to be ready
++until pg_isready -h $POSTGRES_MASTER_HOST -U $POSTGRES_USER; do
++  echo "Waiting for master database to be ready..."
++  sleep 2
++done
++
++echo "Master is ready, starting replica setup"
++
++# Check if data directory is empty (first run)
++if [ -z "$(ls -A /var/lib/postgresql/data)" ]; then
++    echo "Data directory is empty, performing base backup from master"
++    
++    # Perform base backup from master
++    pg_basebackup -h $POSTGRES_MASTER_HOST -D /var/lib/postgresql/data -U replicator -v -P -W -R
++    
++    # Create standby signal file (for PostgreSQL 12+)
++    touch /var/lib/postgresql/data/standby.signal
++    
++    # Set proper permissions
++    chown -R postgres:postgres /var/lib/postgresql/data
++    chmod 700 /var/lib/postgresql/data
++    
++    echo "Base backup completed"
++else
++    echo "Data directory is not empty, assuming replica is already configured"
++fi
++
++echo "Replica setup completed"
+\ No newline at end of file
+diff --git a/services/api-gateway/Dockerfile b/services/api-gateway/Dockerfile
+index 997e290..0b25ef9 100644
+--- a/services/api-gateway/Dockerfile
++++ b/services/api-gateway/Dockerfile
+@@ -2,10 +2,10 @@ FROM node:18-slim
+ 
+ WORKDIR /app
+ 
+-COPY package*.json ./
++COPY ./api-gateway/package*.json ./
+ RUN npm install --omit=dev
+ 
+-COPY . .
++COPY ./api-gateway/ .
+ 
+ EXPOSE 4000
+ 
+diff --git a/services/api-gateway/index.js b/services/api-gateway/index.js
+index d3f817b..bf52ae5 100644
+--- a/services/api-gateway/index.js
++++ b/services/api-gateway/index.js
+@@ -1,12 +1,22 @@
+ const express = require('express');
+ const { createProxyMiddleware } = require('http-proxy-middleware');
+ const cors = require('cors');
+-const helmet = require('helmet');
+ const jwt = require('jsonwebtoken');
++const url = require('url');
+ 
+ const app = express();
+ const PORT = process.env.PORT || 4000;
+ 
++// Parse service URLs with fallback defaults
++const authServices = (process.env.AUTH_SERVICE_URL || 'http://auth-service-1:3001').split(',').map(u => u.trim());
++const documentServices = (process.env.DOCUMENT_SERVICE_URL || 'http://document-service-1:3002').split(',').map(u => u.trim());
++const collaborationServices = (process.env.COLLABORATION_SERVICE_URL || 'http://collaboration-service-1:3003').split(',').map(u => u.trim());
++
++// Load balancing counters
++let authIndex = 0;
++let documentIndex = 0;
++let collaborationIndex = 0;
++
+ // Middleware
+ app.use(cors());
+ 
+@@ -15,69 +25,14 @@ app.get('/health', (req, res) => {
+   res.json({
+     status: 'healthy',
+     service: 'api-gateway',
+-    timestamp: new Date().toISOString(),
+-    services: {
+-      auth: process.env.AUTH_SERVICE_URL || 'http://localhost:3001',
+-      document: process.env.DOCUMENT_SERVICE_URL || 'http://localhost:3002',
+-      collaboration: process.env.COLLABORATION_SERVICE_URL || 'http://localhost:3003'
+-    }
+-  });
+-});
+-
+-// Manual proxy to Auth Service
+-app.use('/api/auth', (req, res) => {
+-  console.log(`[API Gateway] Manual proxy: ${req.method} ${req.originalUrl}`);
+-
+-  // Remove /api/auth prefix
+-  const targetPath = req.originalUrl.replace('/api/auth', '');
+-
+-  const options = {
+-    hostname: 'auth-service',
+-    port: 3001,
+-    path: targetPath,
+-    method: req.method,
+-    headers: {
+-      ...req.headers,
+-      host: 'auth-service:3001'
+-    }
+-  };
+-
+-  const proxyReq = require('http').request(options, (proxyRes) => {
+-    console.log(`[API Gateway] Response: ${proxyRes.statusCode}`);
+-    res.status(proxyRes.statusCode);
+-
+-    // Copy headers
+-    Object.keys(proxyRes.headers).forEach(key => {
+-      res.setHeader(key, proxyRes.headers[key]);
+-    });
+-
+-    // Pipe response
+-    proxyRes.pipe(res);
+-  });
+-
+-  proxyReq.on('error', (err) => {
+-    console.error('[API Gateway] Proxy error:', err.message);
+-    res.status(500).json({ error: 'Proxy error', message: err.message });
++    timestamp: new Date().toISOString()
+   });
+-
+-  // Pipe request body if present
+-  if (req.method !== 'GET' && req.method !== 'HEAD') {
+-    req.pipe(proxyReq);
+-  } else {
+-    proxyReq.end();
+-  }
+-});
+-
+-// Request logging
+-app.use((req, res, next) => {
+-  console.log(`[API Gateway] Unhandled ${req.method} ${req.originalUrl}`);
+-  next();
+ });
+ 
+ // JWT Authentication middleware
+ const authenticateRequest = (req, res, next) => {
+   const authHeader = req.headers['authorization'];
+-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
++  const token = authHeader && authHeader.split(' ')[1];
+ 
+   if (!token) {
+     return res.status(401).json({
+@@ -93,28 +48,55 @@ const authenticateRequest = (req, res, next) => {
+         message: 'The provided JWT token is invalid or has expired'
+       });
+     }
+-    req.user = user; // Attach user info to request
++    req.user = user;
+     next();
+   });
+ };
+ 
+-// Route requests to Document Service
++// Auth Service proxy (no authentication required)
++app.use('/api/auth', createProxyMiddleware({
++  target: authServices[0], // Default target
++  router: () => {
++    const target = authServices[authIndex % authServices.length];
++    authIndex++;
++    console.log(`[API Gateway] Routing to auth service: ${target}`);
++    return url.parse(target);
++  },
++  changeOrigin: true,
++  pathRewrite: {
++    '^/api/auth': ''
++  }
++}));
++
++// Document Service proxy (requires authentication)
+ app.use('/api/documents', authenticateRequest, createProxyMiddleware({
+-  target: process.env.DOCUMENT_SERVICE_URL || 'http://localhost:3002',
++  target: documentServices[0], // Default target
++  router: () => {
++    const target = documentServices[documentIndex % documentServices.length];
++    documentIndex++;
++    console.log(`[API Gateway] Routing to document service: ${target}`);
++    return url.parse(target);
++  },
+   changeOrigin: true,
+   pathRewrite: {
+-    '^/api/documents': '' // Remove /api/documents prefix when forwarding
++    '^/api/documents': ''
+   }
+ }));
+ 
+-// Route WebSocket connections to Collaboration Service
++// WebSocket proxy for Collaboration Service
+ app.use('/socket.io', createProxyMiddleware({
+-  target: process.env.COLLABORATION_SERVICE_URL || 'http://localhost:3003',
++  target: collaborationServices[0], // Default target
++  router: () => {
++    const target = collaborationServices[collaborationIndex % collaborationServices.length];
++    collaborationIndex++;
++    console.log(`[API Gateway] Routing to collaboration service: ${target}`);
++    return url.parse(target);
++  },
+   changeOrigin: true,
+-  ws: true // Enable WebSocket proxying
++  ws: true
+ }));
+ 
+-// Catch-all route for unmatched requests
++// Catch-all route
+ app.use('*', (req, res) => {
+   res.status(404).json({
+     error: 'Not Found',
+@@ -131,6 +113,7 @@ app.use('*', (req, res) => {
+ // Error handling middleware
+ app.use((err, req, res, next) => {
+   console.error('API Gateway Error:', err);
++  console.error('Stack:', err.stack);
+   res.status(500).json({
+     error: 'Internal Server Error',
+     message: 'Something went wrong in the API Gateway'
+@@ -141,9 +124,9 @@ app.use((err, req, res, next) => {
+ app.listen(PORT, () => {
+   console.log(`API Gateway running on port ${PORT}`);
+   console.log('Routing requests to:');
+-  console.log(`  Auth Service: ${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}`);
+-  console.log(`  Document Service: ${process.env.DOCUMENT_SERVICE_URL || 'http://localhost:3002'}`);
+-  console.log(`  Collaboration Service: ${process.env.COLLABORATION_SERVICE_URL || 'http://localhost:3003'}`);
++  console.log(`  Auth Services: ${authServices.join(', ')}`);
++  console.log(`  Document Services: ${documentServices.join(', ')}`);
++  console.log(`  Collaboration Services: ${collaborationServices.join(', ')}`);
+ });
+ 
+ module.exports = app;
+diff --git a/services/auth-service/Dockerfile b/services/auth-service/Dockerfile
+index c6973b7..0e4de12 100644
+--- a/services/auth-service/Dockerfile
++++ b/services/auth-service/Dockerfile
+@@ -3,13 +3,19 @@ FROM node:18
+ WORKDIR /app
+ 
+ # Copy package files
+-COPY package*.json ./
++COPY ./auth-service/package*.json ./
+ 
+ # Install dependencies
+ RUN npm install --omit=dev
+ 
++# Copy shared utils
++COPY ./shared-utils ./shared-utils
++
++# Install shared utils dependencies
++RUN cd ./shared-utils && npm install
++
+ # Copy application files
+-COPY . .
++COPY ./auth-service/ .
+ 
+ # Generate Prisma client (schema push happens at runtime)
+ RUN npx prisma generate
+diff --git a/services/auth-service/index.js b/services/auth-service/index.js
+index 09ef2c2..bb5c6e3 100644
+--- a/services/auth-service/index.js
++++ b/services/auth-service/index.js
+@@ -2,8 +2,8 @@ const express = require('express');
+ const bcrypt = require('bcryptjs');
+ const jwt = require('jsonwebtoken');
+ const cors = require('cors');
+-const { createResponse, createErrorResponse, asyncHandler } = require('../shared-utils');
+-const prisma = require('../shared-utils/prisma-client');
++const { createResponse, createErrorResponse, asyncHandler } = require('./shared-utils');
++const prisma = require('./shared-utils/prisma-client');
+ 
+ const app = express();
+ const PORT = process.env.PORT || 3001;
+diff --git a/services/auth-service/package.json b/services/auth-service/package.json
+index b3d4660..bc45556 100644
+--- a/services/auth-service/package.json
++++ b/services/auth-service/package.json
+@@ -3,10 +3,10 @@
+   "version": "1.0.0",
+   "description": "Authentication service for user management and JWT tokens",
+   "main": "index.js",
+-  "scripts": {
+-    "start": "npx prisma db push --accept-data-loss && node index.js",
+-    "dev": "nodemon index.js"
+-  },
++    "scripts": {
++      "start": "node index.js",
++      "dev": "nodemon index.js"
++    },
+   "dependencies": {
+     "@prisma/client": "^5.0.0",
+     "bcryptjs": "^2.4.3",
+diff --git a/services/collaboration-service/Dockerfile b/services/collaboration-service/Dockerfile
+index 264147e..60bc5f9 100644
+--- a/services/collaboration-service/Dockerfile
++++ b/services/collaboration-service/Dockerfile
+@@ -3,7 +3,7 @@ FROM node:18-slim
+ WORKDIR /app
+ 
+ # Copy package files
+-COPY package*.json ./
++COPY ./collaboration-service/package*.json ./
+ 
+ # Install system dependencies for Prisma
+ RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+@@ -11,8 +11,14 @@ RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/
+ # Install dependencies
+ RUN npm install
+ 
++# Copy shared utils
++COPY ./shared-utils ./shared-utils
++
++# Install shared utils dependencies
++RUN cd ./shared-utils && npm install
++
+ # Copy the rest of the application
+-COPY . .
++COPY ./collaboration-service/ .
+ 
+ # Generate Prisma Client after schema.prisma is copied
+ RUN npx prisma generate
+diff --git a/services/collaboration-service/index.js b/services/collaboration-service/index.js
+index 8964867..ffdbd60 100644
+--- a/services/collaboration-service/index.js
++++ b/services/collaboration-service/index.js
+@@ -2,8 +2,8 @@ require("dotenv").config();
+ const express = require('express');
+ const { Server } = require('socket.io');
+ const jwt = require('jsonwebtoken');
+-const { createRedisClient } = require('../shared-utils/redis-client');
+-const prisma = require('../shared-utils/prisma-client');
++const { createRedisClient } = require('./shared-utils/redis-client');
++const prisma = require('./shared-utils/prisma-client');
+ 
+ const app = express();
+ const PORT = process.env.PORT || 3003;
+diff --git a/services/collaboration-service/package.json b/services/collaboration-service/package.json
+index e445d6b..61ffff1 100644
+--- a/services/collaboration-service/package.json
++++ b/services/collaboration-service/package.json
+@@ -3,10 +3,10 @@
+   "version": "1.0.0",
+   "description": "Real-time collaboration service handling WebSocket connections and operational transformation",
+   "main": "index.js",
+-  "scripts": {
+-    "start": "npx prisma db push --accept-data-loss && node index.js",
+-    "dev": "nodemon index.js"
+-  },
++    "scripts": {
++      "start": "node index.js",
++      "dev": "nodemon index.js"
++    },
+   "author": "",
+   "license": "ISC",
+   "dependencies": {
+diff --git a/services/document-service/Dockerfile b/services/document-service/Dockerfile
+index c6973b7..466f4a3 100644
+--- a/services/document-service/Dockerfile
++++ b/services/document-service/Dockerfile
+@@ -3,13 +3,19 @@ FROM node:18
+ WORKDIR /app
+ 
+ # Copy package files
+-COPY package*.json ./
++COPY ./document-service/package*.json ./
+ 
+ # Install dependencies
+ RUN npm install --omit=dev
+ 
++# Copy shared utils
++COPY ./shared-utils ./shared-utils
++
++# Install shared utils dependencies
++RUN cd ./shared-utils && npm install
++
+ # Copy application files
+-COPY . .
++COPY ./document-service/ .
+ 
+ # Generate Prisma client (schema push happens at runtime)
+ RUN npx prisma generate
+diff --git a/services/document-service/index.js b/services/document-service/index.js
+index 80b92c7..55c89c9 100644
+--- a/services/document-service/index.js
++++ b/services/document-service/index.js
+@@ -1,8 +1,8 @@
+ const express = require('express');
+ const cors = require('cors');
+ const jwt = require('jsonwebtoken');
+-const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('../shared-utils');
+-const prisma = require('../shared-utils/prisma-client');
++const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('./shared-utils');
++const prisma = require('./shared-utils/prisma-client');
+ 
+ const app = express();
+ const PORT = process.env.PORT || 3002;
+diff --git a/services/document-service/package.json b/services/document-service/package.json
+index 260adee..615c997 100644
+--- a/services/document-service/package.json
++++ b/services/document-service/package.json
+@@ -3,10 +3,10 @@
+   "version": "1.0.0",
+   "description": "Document management service for CRUD operations on documents",
+   "main": "index.js",
+-  "scripts": {
+-    "start": "npx prisma db push --accept-data-loss && node index.js",
+-    "dev": "nodemon index.js"
+-  },
++    "scripts": {
++      "start": "node index.js",
++      "dev": "nodemon index.js"
++    },
+   "dependencies": {
+     "express": "^4.18.0",
+     "cors": "^2.8.5",
+diff --git a/services/reconciliation-service/Dockerfile b/services/reconciliation-service/Dockerfile
+new file mode 100644
+index 0000000..7babf9e
+--- /dev/null
++++ b/services/reconciliation-service/Dockerfile
+@@ -0,0 +1,23 @@
++FROM node:18-alpine
++
++WORKDIR /app
++
++# Copy package files
++COPY ./reconciliation-service/package*.json ./
++
++# Install dependencies
++RUN npm install --omit=dev
++
++# Copy application code
++COPY ./reconciliation-service/ .
++
++# Run as non-root user
++RUN addgroup -g 1001 -S nodejs && \
++    adduser -S nodejs -u 1001 && \
++    chown -R nodejs:nodejs /app
++
++USER nodejs
++
++EXPOSE 3004
++
++CMD ["node", "index.js"]
+\ No newline at end of file
+diff --git a/services/reconciliation-service/index.js b/services/reconciliation-service/index.js
+new file mode 100644
+index 0000000..28a79c3
+--- /dev/null
++++ b/services/reconciliation-service/index.js
+@@ -0,0 +1,101 @@
++const { Kafka } = require('kafkajs');
++
++const instanceId = process.env.INSTANCE_ID || 'reconcile-1';
++const consumerGroup = process.env.CONSUMER_GROUP || 'reconciliation-group';
++const kafkaBrokers = (process.env.KAFKA_BROKERS || 'localhost:9092').split(',');
++
++console.log(`[${instanceId}] Starting Reconciliation Service`);
++console.log(`[${instanceId}] Kafka Brokers:`, kafkaBrokers);
++
++const kafka = new Kafka({
++  clientId: instanceId,
++  brokers: kafkaBrokers,
++  retry: {
++    initialRetryTime: 100,
++    retries: 8
++  }
++});
++
++const consumer = kafka.consumer({ 
++  groupId: consumerGroup,
++  sessionTimeout: 30000,
++  heartbeatInterval: 3000
++});
++
++async function reconcileDocument(message) {
++  const { documentId, operation, timestamp, userId } = JSON.parse(message.value.toString());
++
++  console.log(`[${instanceId}] Reconciling document ${documentId}, operation: ${operation}`);
++
++  try {
++    // Placeholder for actual reconciliation logic
++    // For now, just log the operation without database storage
++    console.log(`[${instanceId}] Would store: document=${documentId}, operation=${operation}, user=${userId}, timestamp=${timestamp}`);
++
++    console.log(`[${instanceId}] Successfully reconciled document ${documentId}`);
++  } catch (error) {
++    console.error(`[${instanceId}] Error reconciling document ${documentId}:`, error);
++    throw error;
++  }
++}
++
++async function run() {
++  try {
++    await consumer.connect();
++    console.log(`[${instanceId}] Connected to Kafka`);
++    
++    await consumer.subscribe({ 
++      topics: ['document-changes', 'collaboration-events'],
++      fromBeginning: false 
++    });
++    
++    console.log(`[${instanceId}] Subscribed to topics`);
++    
++    await consumer.run({
++      eachMessage: async ({ topic, partition, message }) => {
++        console.log(`[${instanceId}] Received message from topic ${topic}, partition ${partition}`);
++        
++        try {
++          await reconcileDocument(message);
++        } catch (error) {
++          console.error(`[${instanceId}] Failed to process message:`, error);
++          // In production, you might want to send to a dead letter queue
++        }
++      },
++    });
++    
++    console.log(`[${instanceId}] Consumer running`);
++  } catch (error) {
++    console.error(`[${instanceId}] Error starting consumer:`, error);
++    process.exit(1);
++  }
++}
++
++// Graceful shutdown
++const errorTypes = ['unhandledRejection', 'uncaughtException'];
++const signalTraps = ['SIGTERM', 'SIGINT', 'SIGUSR2'];
++
++errorTypes.forEach(type => {
++  process.on(type, async (error) => {
++    try {
++      console.log(`[${instanceId}] ${type}:`, error);
++      await consumer.disconnect();
++      process.exit(0);
++    } catch (_) {
++      process.exit(1);
++    }
++  });
++});
++
++signalTraps.forEach(type => {
++  process.once(type, async () => {
++    try {
++      console.log(`[${instanceId}] Received ${type}, shutting down gracefully`);
++      await consumer.disconnect();
++    } finally {
++      process.kill(process.pid, type);
++    }
++  });
++});
++
++run();
+\ No newline at end of file
+diff --git a/services/reconciliation-service/package.json b/services/reconciliation-service/package.json
+new file mode 100644
+index 0000000..aeac37d
+--- /dev/null
++++ b/services/reconciliation-service/package.json
+@@ -0,0 +1,17 @@
++{
++    "name": "reconciliation-service",
++    "version": "1.0.0",
++    "description": "Reconciliation service for distributed text editor",
++    "main": "index.js",
++    "scripts": {
++      "start": "node index.js",
++      "dev": "nodemon index.js"
++    },
++    "dependencies": {
++      "kafkajs": "^2.2.4",
++      "dotenv": "^16.0.3"
++    },
++    "devDependencies": {
++      "nodemon": "^3.0.1"
++    }
++  }
+\ No newline at end of file
+-- 
+2.44.0.windows.1
+

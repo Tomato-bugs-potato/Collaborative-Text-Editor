@@ -3,6 +3,9 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('./shared-utils');
 const prisma = require('./shared-utils/prisma-client');
+const { validate, createDocumentSchema, updateDocumentSchema, addCollaboratorSchema } = require('./src/utils/validation');
+const { connectProducer, publishDocumentEvent } = require('./src/utils/kafka-producer');
+const { cache, invalidateCache } = require('./src/middleware/cache');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -73,8 +76,8 @@ app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
  *         description: List of documents
  */
 
-// Get specific document
-app.get('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
+// Get specific document (with caching)
+app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   const document = await prisma.document.findFirst({
@@ -121,13 +124,14 @@ app.get('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
  *         description: Document not found
  */
 
-// Create new document
-app.post('/documents', authenticateToken, asyncHandler(async (req, res) => {
+// Create new document (with validation)
+app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncHandler(async (req, res) => {
   const { title, content } = req.body;
+  const docId = generateId();
 
   const document = await prisma.document.create({
     data: {
-      id: generateId(),
+      id: docId,
       title: title || 'Untitled Document',
       data: content || {},
       ownerId: req.user.userId
@@ -135,6 +139,13 @@ app.post('/documents', authenticateToken, asyncHandler(async (req, res) => {
     include: {
       collaborators: true
     }
+  });
+
+  // Publish event
+  await publishDocumentEvent('DOCUMENT_CREATED', {
+    documentId: docId,
+    userId: req.user.userId,
+    title: document.title
   });
 
   res.status(201).json(createResponse(true, document, 'Document created successfully'));
@@ -161,8 +172,8 @@ app.post('/documents', authenticateToken, asyncHandler(async (req, res) => {
  *         description: Document created successfully
  */
 
-// Update document
-app.put('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
+// Update document (with validation)
+app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { title, data } = req.body;
 
@@ -199,6 +210,16 @@ app.put('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
     include: {
       collaborators: true
     }
+  });
+
+  // Invalidate cache
+  await invalidateCache(id);
+
+  // Publish event
+  await publishDocumentEvent('DOCUMENT_UPDATED', {
+    documentId: id,
+    userId: req.user.userId,
+    updates: { title: !!title, data: !!data }
   });
 
   res.json(createResponse(true, updatedDocument, 'Document updated successfully'));
@@ -254,6 +275,15 @@ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) =>
     where: { id }
   });
 
+  // Invalidate cache
+  await invalidateCache(id);
+
+  // Publish event
+  await publishDocumentEvent('DOCUMENT_DELETED', {
+    documentId: id,
+    userId: req.user.userId
+  });
+
   res.json(createResponse(true, null, 'Document deleted successfully'));
 }));
 /**
@@ -275,14 +305,12 @@ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) =>
  *         description: Document not found
  */
 
-// Add collaborator to document
-app.post('/documents/:id/collaborators', authenticateToken, asyncHandler(async (req, res) => {
+// Add collaborator to document (with validation)
+app.post('/documents/:id/collaborators', authenticateToken, validate(addCollaboratorSchema), asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { userId, role = 'editor' } = req.body;
+  const { userId, role } = req.body;
 
-  if (!userId) {
-    return res.status(400).json(createErrorResponse('User ID is required', 400));
-  }
+
 
   // Check if document exists and user is owner
   const document = await prisma.document.findFirst({
@@ -329,6 +357,17 @@ app.post('/documents/:id/collaborators', authenticateToken, asyncHandler(async (
       userId: parseInt(userId),
       role
     }
+  });
+
+  // Invalidate cache since permissions changed
+  await invalidateCache(id);
+
+  // Publish event
+  await publishDocumentEvent('COLLABORATOR_ADDED', {
+    documentId: id,
+    addedBy: req.user.userId,
+    addedUser: userId,
+    role
   });
 
   res.status(201).json(createResponse(true, collaborator, 'Collaborator added successfully'));
@@ -394,6 +433,16 @@ app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandl
     }
   });
 
+  // Invalidate cache
+  await invalidateCache(id);
+
+  // Publish event
+  await publishDocumentEvent('COLLABORATOR_REMOVED', {
+    documentId: id,
+    removedBy: req.user.userId,
+    removedUser: userId
+  });
+
   res.json(createResponse(true, null, 'Collaborator removed successfully'));
 }));
 /**
@@ -426,8 +475,12 @@ app.listen(PORT, async () => {
     await prisma.$connect();
     console.log(`Document service running on port ${PORT}`);
     console.log('Connected to database successfully');
+
+    // Connect Kafka producer
+    await connectProducer();
+
   } catch (error) {
-    console.error('Failed to connect to database:', error);
+    console.error('Failed to start service:', error);
     process.exit(1);
   }
 });

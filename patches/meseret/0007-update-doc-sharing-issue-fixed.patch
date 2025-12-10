@@ -1,0 +1,32 @@
+From c143d2affbd5d84054610892ef68ee638e27a0e0 Mon Sep 17 00:00:00 2001
+From: MichaelGetu-git <michaelgetu21@gmail.com>
+Date: Fri, 5 Dec 2025 23:28:23 +0300
+Subject: [PATCH 07/12] update: doc sharing issue fixed
+
+---
+ docker-compose.distributed.yml | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/docker-compose.distributed.yml b/docker-compose.distributed.yml
+index 3bbcfd7..b979f2c 100644
+--- a/docker-compose.distributed.yml
++++ b/docker-compose.distributed.yml
+@@ -406,6 +406,7 @@ services:
+       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
+       - JWT_SECRET=your-super-secret-jwt-key
++      - AUTH_SERVICE_URL=http://auth-service-1:3001
+     ports:
+       - "3002:3002"
+     depends_on:
+@@ -436,6 +437,7 @@ services:
+       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
+       - JWT_SECRET=your-super-secret-jwt-key
++      - AUTH_SERVICE_URL=http://auth-service-1:3001
+     ports:
+       - "3012:3002"
+     depends_on:
+-- 
+2.44.0.windows.1
+

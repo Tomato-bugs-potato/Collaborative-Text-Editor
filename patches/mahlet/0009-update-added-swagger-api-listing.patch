@@ -1,0 +1,640 @@
+From 600d52629548c27966a4f7ff20d140f399600b04 Mon Sep 17 00:00:00 2001
+From: MichaelGetu-git <michaelgetu21@gmail.com>
+Date: Sat, 6 Dec 2025 00:33:34 +0300
+Subject: [PATCH 09/12] update: added swagger api listing
+
+---
+ services/auth-service/index.js                |  67 ++++++++
+ services/auth-service/package.json            |   6 +-
+ services/auth-service/src/config/swagger.js   |  32 ++++
+ services/collaboration-service/index.js       |  50 ++++++
+ services/collaboration-service/package.json   |   3 +-
+ services/document-service/index.js            | 159 ++++++++++++++++++
+ services/document-service/package.json        |   6 +-
+ .../document-service/src/config/swagger.js    |  32 ++++
+ .../src/utils/kafka-producer.js               |   2 +-
+ services/reconciliation-service/index.js      |  39 +++--
+ 10 files changed, 378 insertions(+), 18 deletions(-)
+ create mode 100644 services/auth-service/src/config/swagger.js
+ create mode 100644 services/document-service/src/config/swagger.js
+
+diff --git a/services/auth-service/index.js b/services/auth-service/index.js
+index 897374e..6741574 100644
+--- a/services/auth-service/index.js
++++ b/services/auth-service/index.js
+@@ -18,8 +18,46 @@ app.get('/health', (req, res) => {
+ });
+ 
+ const { validate, registerSchema, loginSchema } = require('./src/utils/validation');
++const swaggerUi = require('swagger-ui-express');
++const swaggerSpecs = require('./src/config/swagger');
++
++// Swagger UI
++app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+ 
+ // Register endpoint
++/**
++ * @swagger
++ * /register:
++ *   post:
++ *     summary: Register a new user
++ *     tags: [Auth]
++ *     requestBody:
++ *       required: true
++ *       content:
++ *         application/json:
++ *           schema:
++ *             type: object
++ *             required:
++ *               - email
++ *               - password
++ *               - name
++ *             properties:
++ *               email:
++ *                 type: string
++ *                 format: email
++ *               password:
++ *                 type: string
++ *                 minLength: 6
++ *               name:
++ *                 type: string
++ *     responses:
++ *       201:
++ *         description: User registered successfully
++ *       400:
++ *         description: Validation error
++ *       409:
++ *         description: User already exists
++ */
+ app.post('/register', validate(registerSchema), asyncHandler(async (req, res) => {
+   const { email, password, name } = req.body;
+ 
+@@ -55,6 +93,35 @@ app.post('/register', validate(registerSchema), asyncHandler(async (req, res) =>
+ }));
+ 
+ // Login endpoint
++/**
++ * @swagger
++ * /login:
++ *   post:
++ *     summary: Login a user
++ *     tags: [Auth]
++ *     requestBody:
++ *       required: true
++ *       content:
++ *         application/json:
++ *           schema:
++ *             type: object
++ *             required:
++ *               - email
++ *               - password
++ *             properties:
++ *               email:
++ *                 type: string
++ *                 format: email
++ *               password:
++ *                 type: string
++ *     responses:
++ *       200:
++ *         description: Login successful
++ *       400:
++ *         description: Validation error
++ *       401:
++ *         description: Invalid credentials
++ */
+ app.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
+   const { email, password } = req.body;
+ 
+diff --git a/services/auth-service/package.json b/services/auth-service/package.json
+index 0a31a4f..381ce1a 100644
+--- a/services/auth-service/package.json
++++ b/services/auth-service/package.json
+@@ -16,9 +16,11 @@
+     "joi": "^18.0.2",
+     "jsonwebtoken": "^9.0.0",
+     "pg": "^8.11.0",
+-    "prisma": "^5.0.0"
++    "prisma": "^5.0.0",
++    "swagger-jsdoc": "^6.2.8",
++    "swagger-ui-express": "^5.0.0"
+   },
+   "devDependencies": {
+     "nodemon": "^2.0.16"
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/services/auth-service/src/config/swagger.js b/services/auth-service/src/config/swagger.js
+new file mode 100644
+index 0000000..71445b1
+--- /dev/null
++++ b/services/auth-service/src/config/swagger.js
+@@ -0,0 +1,32 @@
++const swaggerJsdoc = require('swagger-jsdoc');
++
++const options = {
++    definition: {
++        openapi: '3.0.0',
++        info: {
++            title: 'Auth Service API',
++            version: '1.0.0',
++            description: 'Authentication service for user management and JWT tokens',
++        },
++        servers: [
++            {
++                url: 'http://localhost:3001',
++                description: 'Auth Service',
++            },
++        ],
++        components: {
++            securitySchemes: {
++                bearerAuth: {
++                    type: 'http',
++                    scheme: 'bearer',
++                    bearerFormat: 'JWT',
++                },
++            },
++        },
++    },
++    apis: ['./index.js'], // Path to the API docs
++};
++
++const specs = swaggerJsdoc(options);
++
++module.exports = specs;
+diff --git a/services/collaboration-service/index.js b/services/collaboration-service/index.js
+index 8fe7f2a..96011c4 100644
+--- a/services/collaboration-service/index.js
++++ b/services/collaboration-service/index.js
+@@ -1,6 +1,7 @@
+ require("dotenv").config();
+ const express = require('express');
+ const { Server } = require('socket.io');
++const { Kafka } = require('kafkajs');
+ const jwt = require('jsonwebtoken');
+ const { createRedisClient } = require('./shared-utils/redis-client');
+ const prisma = require('./shared-utils/prisma-client');
+@@ -12,6 +13,32 @@ const PORT = process.env.PORT || 3003;
+ const pubClient = createRedisClient('publisher');
+ const subClient = createRedisClient('subscriber');
+ 
++// Kafka Configuration
++const kafka = new Kafka({
++  clientId: 'collaboration-service',
++  brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
++  retry: {
++    initialRetryTime: 100,
++    retries: 8
++  }
++});
++
++const producer = kafka.producer();
++let isProducerConnected = false;
++
++const connectProducer = async () => {
++  try {
++    await producer.connect();
++    isProducerConnected = true;
++    console.log('Kafka producer connected');
++  } catch (error) {
++    console.error('Failed to connect Kafka producer:', error);
++    // Retry logic could be added here
++  }
++};
++
++connectProducer();
++
+ // Middleware
+ app.use(express.json());
+ 
+@@ -176,6 +203,29 @@ io.on('connection', async (socket) => {
+         otId: ot.id
+       });
+ 
++      // Publish to Kafka for reconciliation
++      if (isProducerConnected) {
++        try {
++          await producer.send({
++            topic: 'document-changes',
++            messages: [
++              {
++                key: documentId,
++                value: JSON.stringify({
++                  documentId,
++                  operation,
++                  version,
++                  userId: socket.userId,
++                  timestamp: new Date().toISOString()
++                })
++              }
++            ]
++          });
++        } catch (err) {
++          console.error('Failed to publish to Kafka:', err);
++        }
++      }
++
+     } catch (error) {
+       console.error('Error processing changes:', error);
+     }
+diff --git a/services/collaboration-service/package.json b/services/collaboration-service/package.json
+index 203a33d..ea74ef9 100644
+--- a/services/collaboration-service/package.json
++++ b/services/collaboration-service/package.json
+@@ -15,6 +15,7 @@
+     "dotenv": "^16.0.1",
+     "express": "^4.18.0",
+     "jsonwebtoken": "^9.0.0",
++    "kafkajs": "^2.2.4",
+     "pg": "^8.11.0",
+     "prisma": "^5.0.0",
+     "redis": "^4.1.0",
+@@ -24,4 +25,4 @@
+   "devDependencies": {
+     "nodemon": "^2.0.16"
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/services/document-service/index.js b/services/document-service/index.js
+index c87b781..465d63a 100644
+--- a/services/document-service/index.js
++++ b/services/document-service/index.js
+@@ -6,6 +6,8 @@ const prisma = require('./shared-utils/prisma-client');
+ const { validate, createDocumentSchema, updateDocumentSchema, addCollaboratorSchema } = require('./src/utils/validation');
+ const { connectProducer, publishDocumentEvent } = require('./src/utils/kafka-producer');
+ const { cache, invalidateCache } = require('./src/middleware/cache');
++const swaggerUi = require('swagger-ui-express');
++const swaggerSpecs = require('./src/config/swagger');
+ 
+ const app = express();
+ const PORT = process.env.PORT || 3002;
+@@ -14,6 +16,9 @@ const PORT = process.env.PORT || 3002;
+ app.use(cors());
+ app.use(express.json());
+ 
++// Swagger UI
++app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
++
+ // JWT authentication middleware
+ const authenticateToken = (req, res, next) => {
+   const authHeader = req.headers['authorization'];
+@@ -38,6 +43,16 @@ app.get('/health', (req, res) => {
+ });
+ 
+ // Get all documents for authenticated user
++/**
++ * @swagger
++ * /documents:
++ *   get:
++ *     summary: Get all documents for the authenticated user
++ *     tags: [Documents]
++ *     responses:
++ *       200:
++ *         description: List of documents
++ */
+ app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
+   const documents = await prisma.document.findMany({
+     where: {
+@@ -64,6 +79,24 @@ app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
+ }));
+ 
+ // Get specific document (with caching)
++/**
++ * @swagger
++ * /documents/{id}:
++ *   get:
++ *     summary: Get a specific document by ID
++ *     tags: [Documents]
++ *     parameters:
++ *       - in: path
++ *         name: id
++ *         required: true
++ *         schema:
++ *           type: string
++ *     responses:
++ *       200:
++ *         description: Document details
++ *       404:
++ *         description: Document not found
++ */
+ app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res) => {
+   const { id } = req.params;
+ 
+@@ -94,6 +127,27 @@ app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res
+ }));
+ 
+ // Create new document (with validation)
++/**
++ * @swagger
++ * /documents:
++ *   post:
++ *     summary: Create a new document
++ *     tags: [Documents]
++ *     requestBody:
++ *       required: true
++ *       content:
++ *         application/json:
++ *           schema:
++ *             type: object
++ *             properties:
++ *               title:
++ *                 type: string
++ *               content:
++ *                 type: object
++ *     responses:
++ *       201:
++ *         description: Document created successfully
++ */
+ app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncHandler(async (req, res) => {
+   const { title, content } = req.body;
+   const docId = generateId();
+@@ -121,6 +175,35 @@ app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncH
+ }));
+ 
+ // Update document (with validation)
++/**
++ * @swagger
++ * /documents/{id}:
++ *   put:
++ *     summary: Update a document
++ *     tags: [Documents]
++ *     parameters:
++ *       - in: path
++ *         name: id
++ *         required: true
++ *         schema:
++ *           type: string
++ *     requestBody:
++ *       required: true
++ *       content:
++ *         application/json:
++ *           schema:
++ *             type: object
++ *             properties:
++ *               title:
++ *                 type: string
++ *               data:
++ *                 type: object
++ *     responses:
++ *       200:
++ *         description: Document updated successfully
++ *       404:
++ *         description: Document not found
++ */
+ app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asyncHandler(async (req, res) => {
+   const { id } = req.params;
+   const { title, data } = req.body;
+@@ -174,6 +257,24 @@ app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asy
+ }));
+ 
+ // Delete document
++/**
++ * @swagger
++ * /documents/{id}:
++ *   delete:
++ *     summary: Delete a document
++ *     tags: [Documents]
++ *     parameters:
++ *       - in: path
++ *         name: id
++ *         required: true
++ *         schema:
++ *           type: string
++ *     responses:
++ *       200:
++ *         description: Document deleted successfully
++ *       404:
++ *         description: Document not found
++ */
+ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
+   const { id } = req.params;
+ 
+@@ -207,6 +308,41 @@ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) =>
+ }));
+ 
+ // Add collaborator to document (with validation)
++/**
++ * @swagger
++ * /documents/{id}/collaborators:
++ *   post:
++ *     summary: Add a collaborator to a document
++ *     tags: [Collaborators]
++ *     parameters:
++ *       - in: path
++ *         name: id
++ *         required: true
++ *         schema:
++ *           type: string
++ *     requestBody:
++ *       required: true
++ *       content:
++ *         application/json:
++ *           schema:
++ *             type: object
++ *             required:
++ *               - userId
++ *               - role
++ *             properties:
++ *               userId:
++ *                 type: integer
++ *               role:
++ *                 type: string
++ *                 enum: [viewer, editor]
++ *     responses:
++ *       201:
++ *         description: Collaborator added successfully
++ *       404:
++ *         description: Document not found
++ *       409:
++ *         description: User is already a collaborator
++ */
+ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollaboratorSchema), asyncHandler(async (req, res) => {
+   const { id } = req.params;
+   const { userId, role } = req.body;
+@@ -274,6 +410,29 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
+ }));
+ 
+ // Remove collaborator from document
++/**
++ * @swagger
++ * /documents/{id}/collaborators/{userId}:
++ *   delete:
++ *     summary: Remove a collaborator from a document
++ *     tags: [Collaborators]
++ *     parameters:
++ *       - in: path
++ *         name: id
++ *         required: true
++ *         schema:
++ *           type: string
++ *       - in: path
++ *         name: userId
++ *         required: true
++ *         schema:
++ *           type: integer
++ *     responses:
++ *       200:
++ *         description: Collaborator removed successfully
++ *       404:
++ *         description: Document not found
++ */
+ app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandler(async (req, res) => {
+   const { id, userId } = req.params;
+ 
+diff --git a/services/document-service/package.json b/services/document-service/package.json
+index a238fe2..0ea11c8 100644
+--- a/services/document-service/package.json
++++ b/services/document-service/package.json
+@@ -15,9 +15,11 @@
+     "prisma": "^5.0.0",
+     "pg": "^8.11.0",
+     "jsonwebtoken": "^9.0.0",
+-    "joi": "^17.9.2",
++    "joi": "17.9.2",
+     "kafkajs": "^2.2.4",
+-    "redis": "^4.6.7"
++    "redis": "^4.6.7",
++    "swagger-jsdoc": "^6.2.8",
++    "swagger-ui-express": "^5.0.0"
+   },
+   "devDependencies": {
+     "nodemon": "^2.0.16"
+diff --git a/services/document-service/src/config/swagger.js b/services/document-service/src/config/swagger.js
+new file mode 100644
+index 0000000..372811c
+--- /dev/null
++++ b/services/document-service/src/config/swagger.js
+@@ -0,0 +1,32 @@
++const swaggerJsdoc = require('swagger-jsdoc');
++
++const options = {
++    definition: {
++        openapi: '3.0.0',
++        info: {
++            title: 'Document Service API',
++            version: '1.0.0',
++            description: 'Document management service for CRUD operations on documents',
++        },
++        servers: [
++            {
++                url: 'http://localhost:3002',
++                description: 'Document Service',
++            },
++        ],
++        components: {
++            securitySchemes: {
++                bearerAuth: {
++                    type: 'http',
++                    scheme: 'bearer',
++                    bearerFormat: 'JWT',
++                },
++            },
++        },
++    },
++    apis: ['./index.js'], // Path to the API docs
++};
++
++const specs = swaggerJsdoc(options);
++
++module.exports = specs;
+diff --git a/services/document-service/src/utils/kafka-producer.js b/services/document-service/src/utils/kafka-producer.js
+index cea21be..eb60861 100644
+--- a/services/document-service/src/utils/kafka-producer.js
++++ b/services/document-service/src/utils/kafka-producer.js
+@@ -29,7 +29,7 @@ const publishDocumentEvent = async (type, payload) => {
+ 
+     try {
+         await producer.send({
+-            topic: 'document-changes',
++            topic: 'document-events',
+             messages: [
+                 {
+                     key: payload.documentId || 'unknown',
+diff --git a/services/reconciliation-service/index.js b/services/reconciliation-service/index.js
+index 28a79c3..e324a6f 100644
+--- a/services/reconciliation-service/index.js
++++ b/services/reconciliation-service/index.js
+@@ -16,7 +16,7 @@ const kafka = new Kafka({
+   }
+ });
+ 
+-const consumer = kafka.consumer({ 
++const consumer = kafka.consumer({
+   groupId: consumerGroup,
+   sessionTimeout: 30000,
+   heartbeatInterval: 3000
+@@ -25,12 +25,17 @@ const consumer = kafka.consumer({
+ async function reconcileDocument(message) {
+   const { documentId, operation, timestamp, userId } = JSON.parse(message.value.toString());
+ 
+-  console.log(`[${instanceId}] Reconciling document ${documentId}, operation: ${operation}`);
++  console.log(`[${instanceId}] Reconciling document ${documentId}, operation: ${operation ? 'present' : 'undefined'}`);
++
++  if (!operation) {
++    console.warn(`[${instanceId}] Skipping message with no operation`);
++    return;
++  }
+ 
+   try {
+     // Placeholder for actual reconciliation logic
+     // For now, just log the operation without database storage
+-    console.log(`[${instanceId}] Would store: document=${documentId}, operation=${operation}, user=${userId}, timestamp=${timestamp}`);
++    console.log(`[${instanceId}] Would store: document=${documentId}, operation=${JSON.stringify(operation)}, user=${userId}, timestamp=${timestamp}`);
+ 
+     console.log(`[${instanceId}] Successfully reconciled document ${documentId}`);
+   } catch (error) {
+@@ -39,31 +44,41 @@ async function reconcileDocument(message) {
+   }
+ }
+ 
++async function handleDocumentEvent(message) {
++  const event = JSON.parse(message.value.toString());
++  console.log(`[${instanceId}] Received document event: ${event.type} for doc ${event.documentId}`);
++  // Handle lifecycle events (created, updated, deleted)
++}
++
+ async function run() {
+   try {
+     await consumer.connect();
+     console.log(`[${instanceId}] Connected to Kafka`);
+-    
+-    await consumer.subscribe({ 
+-      topics: ['document-changes', 'collaboration-events'],
+-      fromBeginning: false 
++
++    await consumer.subscribe({
++      topics: ['document-changes', 'document-events'],
++      fromBeginning: false
+     });
+-    
++
+     console.log(`[${instanceId}] Subscribed to topics`);
+-    
++
+     await consumer.run({
+       eachMessage: async ({ topic, partition, message }) => {
+         console.log(`[${instanceId}] Received message from topic ${topic}, partition ${partition}`);
+-        
++
+         try {
+-          await reconcileDocument(message);
++          if (topic === 'document-changes') {
++            await reconcileDocument(message);
++          } else if (topic === 'document-events') {
++            await handleDocumentEvent(message);
++          }
+         } catch (error) {
+           console.error(`[${instanceId}] Failed to process message:`, error);
+           // In production, you might want to send to a dead letter queue
+         }
+       },
+     });
+-    
++
+     console.log(`[${instanceId}] Consumer running`);
+   } catch (error) {
+     console.error(`[${instanceId}] Error starting consumer:`, error);
+-- 
+2.44.0.windows.1
+
