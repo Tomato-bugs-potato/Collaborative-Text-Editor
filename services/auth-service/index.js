@@ -135,6 +135,9 @@ const authenticateToken = (req, res, next) => {
 // ROUTES
 // ===================
 
+// Swagger UI
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+
 // Health check
 app.get('/health', (req, res) => {
   res.json(createResponse(true, null, 'Auth service is healthy'));
@@ -455,6 +458,7 @@ app.get('/users/:id', authenticateToken, asyncHandler(async (req, res) => {
       id: true,
       email: true,
       name: true,
+      emailVerified: true,
       createdAt: true
     }
   });

@@ -5,7 +5,7 @@ WORKDIR /app
 # Copy package files
 COPY ./auth-service/package*.json ./
 
-# Install dependencies
+# Install service dependencies
 RUN npm install --omit=dev
 
 # Copy shared utils
@@ -20,7 +20,6 @@ COPY ./auth-service/ .
 # Generate Prisma client (schema push happens at runtime)
 RUN npx prisma generate
 
-# Expose port
 EXPOSE 3001
 
 CMD ["npm", "start"]
