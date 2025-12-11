@@ -1,16 +1,139 @@
+require('dotenv').config();
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const { v4: uuidv4 } = require('uuid');
 const { createResponse, createErrorResponse, asyncHandler } = require('./shared-utils');
 const prisma = require('./shared-utils/prisma-client');
+const { validate, registerSchema, loginSchema } = require('./src/utils/validation');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpecs = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// ===================
+// MIDDLEWARE
+// ===================
+
+// Trust proxy - required for express-rate-limit behind nginx/load balancer
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
+app.use(passport.initialize());
+
+// Rate limiting for auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // limit each IP to 10 requests per windowMs
+  message: createErrorResponse('Too many authentication attempts, please try again after 15 minutes', 429),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// General rate limiting
+const generalLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // limit each IP to 100 requests per minute
+  message: createErrorResponse('Too many requests, please try again later', 429),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(generalLimiter);
+
+// ===================
+// GOOGLE OAUTH CONFIG
+// ===================
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3001/auth/google/callback'
+  },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        // Find or create user
+        let user = await prisma.user.findUnique({
+          where: { googleId: profile.id }
+        });
+
+        if (!user) {
+          // Check if email already exists
+          const existingUser = await prisma.user.findUnique({
+            where: { email: profile.emails[0].value }
+          });
+
+          if (existingUser) {
+            // Link Google account to existing user
+            user = await prisma.user.update({
+              where: { id: existingUser.id },
+              data: {
+                googleId: profile.id,
+                emailVerified: true
+              }
+            });
+          } else {
+            // Create new user
+            user = await prisma.user.create({
+              data: {
+                email: profile.emails[0].value,
+                name: profile.displayName,
+                googleId: profile.id,
+                emailVerified: true,
+                password: null
+              }
+            });
+          }
+        }
+
+        return done(null, user);
+      } catch (error) {
+        return done(error, null);
+      }
+    }));
+}
+
+// ===================
+// HELPER FUNCTIONS
+// ===================
+const generateTokens = (user) => {
+  const accessToken = jwt.sign(
+    { userId: user.id, email: user.email },
+    process.env.JWT_SECRET || 'default-secret-key',
+    { expiresIn: '15m' }
+  );
+
+  const refreshToken = uuidv4();
+
+  return { accessToken, refreshToken };
+};
+
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json(createErrorResponse('Access token required', 401));
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET || 'default-secret-key', (err, user) => {
+    if (err) {
+      return res.status(403).json(createErrorResponse('Invalid or expired token', 403));
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// ===================
+// ROUTES
+// ===================
 
 // Swagger UI
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
@@ -20,7 +143,9 @@ app.get('/health', (req, res) => {
   res.json(createResponse(true, null, 'Auth service is healthy'));
 });
 
-// Register endpoint
+// Swagger
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+
 /**
  * @swagger
  * /register:
@@ -281,6 +406,7 @@ app.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
       id: true,
       email: true,
       name: true,
+      emailVerified: true,
       createdAt: true
     }
   });

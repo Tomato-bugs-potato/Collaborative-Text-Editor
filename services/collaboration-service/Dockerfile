@@ -18,6 +18,12 @@ COPY ./shared-utils ./shared-utils
 # Install shared utils dependencies
 RUN cd ./shared-utils && npm install
 
+# Copy shared utils
+COPY ./shared-utils ./shared-utils
+
+# Install shared utils dependencies
+RUN cd ./shared-utils && npm install
+
 # Copy the rest of the application
 COPY ./collaboration-service/ .
 

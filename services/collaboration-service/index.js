@@ -33,6 +33,7 @@ const connectProducer = async () => {
     console.log('Kafka producer connected');
   } catch (error) {
     console.error('Failed to connect Kafka producer:', error);
+    // Retry logic could be added here
   }
 };
 
@@ -46,6 +47,8 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', service: 'collaboration-service' });
 });
 
+const { createAdapter } = require("@socket.io/redis-adapter");
+
 // Socket.IO server with Redis adapter
 const io = new Server({
   cors: {
@@ -54,15 +57,13 @@ const io = new Server({
   }
 });
 
-// Connect Redis clients and attach Socket.IO adapter
-Promise.all([pubClient.connect(), subClient.connect()])
-  .then(() => {
-    io.adapter(createAdapter(pubClient, subClient));
-    console.log('Redis adapter connected');
-  })
-  .catch((err) => {
-    console.error('Redis adapter connection error:', err);
-  });
+// Connect Redis clients and attach adapter
+Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
+  io.adapter(createAdapter(pubClient, subClient));
+  console.log('Redis adapter connected');
+}).catch(err => {
+  console.error('Redis adapter connection error:', err);
+});
 
 // JWT authentication middleware for sockets
 io.use(async (socket, next) => {
