@@ -3,9 +3,14 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const url = require('url');
+const { setupMetrics } = require('./shared-utils');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const INSTANCE_ID = process.env.INSTANCE_ID || 'gateway-1';
+
+// Setup Prometheus metrics
+setupMetrics(app, 'api-gateway', INSTANCE_ID);
 
 // Parse service URLs with fallback defaults
 const authServices = (process.env.AUTH_SERVICE_URL || 'http://auth-service-1:3001').split(',').map(u => u.trim());

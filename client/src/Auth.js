@@ -81,9 +81,14 @@ export default function Auth({ onLogin }) {
 
   const sendVerificationEmail = async (email, name) => {
     try {
-      const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+      // Generate a verification token
+      const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+
+      // Create verification link
+      const verificationLink = `${window.location.origin}/verify?token=${token}&email=${encodeURIComponent(email)}`;
 
       console.log('Sending verification email to:', email);
+      console.log('Verification link:', verificationLink);
 
       const result = await emailjs.send(
         EMAILJS_SERVICE_ID,
@@ -92,8 +97,8 @@ export default function Auth({ onLogin }) {
           email: email,
           reply_to: email,
           subject: 'Verify your email - Collaborative Text Editor',
-          message: `Hi ${name},\n\nYour verification code is: ${code}\n\nPlease enter this code to complete your registration.\n\nBest regards,\nCollaborative Text Editor Team`,
-          verification_code: code,
+          verifyUrl: verificationLink,
+          message: `Click here to verify your email: ${verificationLink}. Link expires in 1 hour.`,
           user_name: name
         },
         EMAILJS_PUBLIC_KEY
@@ -101,8 +106,8 @@ export default function Auth({ onLogin }) {
 
       console.log('Email sent successfully:', result);
 
-      // Store verification code locally (in production, store on server)
-      sessionStorage.setItem('verificationCode', code);
+      // Store verification token locally (in production, store on server)
+      sessionStorage.setItem('verificationToken', token);
       sessionStorage.setItem('verificationEmail', email);
 
       return true;
@@ -211,7 +216,7 @@ export default function Auth({ onLogin }) {
         // Registration successful
         const emailSent = await sendVerificationEmail(formData.email, formData.name);
         if (emailSent) {
-          setSuccess('Account created! Please enter the verification code sent to your email.');
+          setSuccess('Account created! Please check your email and click the verification link to complete registration.');
           setIsVerifying(true);
         } else {
           setError('Account created but failed to send email. Please try logging in.');
@@ -248,13 +253,31 @@ export default function Auth({ onLogin }) {
         borderRadius: '12px',
         boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
       }}>
-        <h2 style={{ textAlign: 'center', marginBottom: '24px', color: '#333' }}>
-          Verify Email
+        <div style={{
+          width: '60px',
+          height: '60px',
+          backgroundColor: '#e3f2fd',
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          margin: '0 auto 20px'
+        }}>
+          <span style={{ fontSize: '28px' }}>✉️</span>
+        </div>
+
+        <h2 style={{ textAlign: 'center', marginBottom: '16px', color: '#333' }}>
+          Check Your Email
         </h2>
 
-        <div style={{ marginBottom: '20px', textAlign: 'center', color: '#666' }}>
-          We sent a code to <strong>{formData.email}</strong>
-        </div>
+        <p style={{ textAlign: 'center', color: '#666', marginBottom: '20px', lineHeight: '1.6' }}>
+          We sent a verification link to<br />
+          <strong>{formData.email}</strong>
+        </p>
+
+        <p style={{ textAlign: 'center', color: '#888', fontSize: '14px', marginBottom: '24px' }}>
+          Click the link in the email to verify your account and complete registration.
+        </p>
 
         {error && (
           <div style={{
@@ -263,7 +286,8 @@ export default function Auth({ onLogin }) {
             marginBottom: '16px',
             padding: '12px',
             borderRadius: '4px',
-            fontSize: '14px'
+            fontSize: '14px',
+            textAlign: 'center'
           }}>
             {error}
           </div>
@@ -276,59 +300,47 @@ export default function Auth({ onLogin }) {
             marginBottom: '16px',
             padding: '12px',
             borderRadius: '4px',
-            fontSize: '14px'
+            fontSize: '14px',
+            textAlign: 'center'
           }}>
             {success}
           </div>
         )}
 
-        <form onSubmit={handleVerification}>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ fontSize: '14px', color: '#666', display: 'block', marginBottom: '4px' }}>
-              Verification Code
-            </label>
-            <input
-              type="text"
-              value={verificationCode}
-              onChange={(e) => setVerificationCode(e.target.value)}
-              placeholder="Enter 6-character code"
-              required
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid #ddd',
-                borderRadius: '6px',
-                fontSize: '14px',
-                boxSizing: 'border-box',
-                textAlign: 'center',
-                letterSpacing: '2px',
-                textTransform: 'uppercase'
-              }}
-            />
-          </div>
+        <button
+          onClick={async () => {
+            setLoading(true);
+            const emailSent = await sendVerificationEmail(formData.email, formData.name);
+            if (emailSent) {
+              setSuccess('Verification email resent!');
+            } else {
+              setError('Failed to resend email. Please try again.');
+            }
+            setLoading(false);
+          }}
+          disabled={loading}
+          style={{
+            width: '100%',
+            padding: '12px',
+            backgroundColor: loading ? '#ccc' : '#1976d2',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            fontSize: '14px',
+            fontWeight: '500',
+            marginBottom: '12px'
+          }}
+        >
+          {loading ? 'Sending...' : 'Resend Verification Email'}
+        </button>
 
+        <div style={{ textAlign: 'center' }}>
           <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: '100%',
-              padding: '12px',
-              backgroundColor: loading ? '#ccc' : '#1976d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '14px',
-              fontWeight: '500'
+            onClick={() => {
+              setIsVerifying(false);
+              setIsLogin(true);
             }}
-          >
-            {loading ? 'Verifying...' : 'Verify Email'}
-          </button>
-        </form>
-
-        <div style={{ textAlign: 'center', marginTop: '20px' }}>
-          <button
-            onClick={() => setIsVerifying(false)}
             style={{
               backgroundColor: 'transparent',
               border: 'none',

@@ -5,6 +5,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { createRedisClient, createPubSubClients } = require('./redis-client');
 const { createKafkaClient } = require('./kafka-client');
+const { setupMetrics, metricsMiddleware, wsConnections, kafkaMessagesTotal, dbQueryDuration } = require('./metrics');
 
 // Generate unique IDs for documents, users, etc.
 const generateId = () => {
@@ -128,5 +129,10 @@ module.exports = {
   isValidPassword,
   createRedisClient,
   createPubSubClients,
-  createKafkaClient
+  createKafkaClient,
+  setupMetrics,
+  metricsMiddleware,
+  wsConnections,
+  kafkaMessagesTotal,
+  dbQueryDuration
 };

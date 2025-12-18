@@ -17,10 +17,13 @@ RUN cd ./shared-utils && npm install
 # Copy application files
 COPY ./auth-service/ .
 
-# Generate Prisma client (schema push happens at runtime)
+# Generate Prisma client
 RUN npx prisma generate
+
+# Create startup script that runs migrations then starts the app
+RUN echo '#!/bin/sh\necho "Running Prisma migrations..."\nnpx prisma db push --skip-generate\necho "Starting auth service..."\nnode index.js' > /app/start.sh && chmod +x /app/start.sh
 
 # Expose port
 EXPOSE 3001
 
-CMD ["npm", "start"]
+CMD ["/app/start.sh"]

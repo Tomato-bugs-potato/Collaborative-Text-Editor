@@ -1,0 +1,21 @@
+{
+    "name": "presence-service",
+    "version": "1.0.0",
+    "description": "Presence service for distributed text editor",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "nodemon index.js"
+    },
+    "dependencies": {
+        "express": "^4.18.2",
+        "redis": "^4.6.7",
+        "dotenv": "^16.0.3",
+        "cors": "^2.8.5",
+        "swagger-jsdoc": "^6.2.8",
+        "swagger-ui-express": "^5.0.0"
+    },
+    "devDependencies": {
+        "nodemon": "^3.0.1"
+    }
+}

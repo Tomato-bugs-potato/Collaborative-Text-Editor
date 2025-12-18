@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import TextEditor from './TextEditor';
 import Auth from './Auth';
 import AuthCallback from './AuthCallback';
+import VerifyEmail from './VerifyEmail';
 import ShareModal from './ShareModal';
 import {
   BrowserRouter as Router,
@@ -91,7 +92,6 @@ function DocumentList() {
         </div>
       </div>
 
-      {/* Share Modal */}
       {shareModal && (
         <ShareModal
           documentId={shareModal}
@@ -186,14 +186,12 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is already logged in and validate token
     const checkAuth = async () => {
       const token = localStorage.getItem('authToken');
       const userData = localStorage.getItem('user');
 
       if (token && userData) {
         try {
-          // Validate token by making a request to a protected endpoint
           const response = await fetch(DOCUMENTS_BASE_URL, {
             headers: {
               'Authorization': `Bearer ${token}`
@@ -203,12 +201,10 @@ function App() {
           if (response.ok) {
             setUser(JSON.parse(userData));
           } else {
-            // Token is invalid, clear localStorage
             localStorage.removeItem('authToken');
             localStorage.removeItem('user');
           }
         } catch (error) {
-          // Network error, clear localStorage to be safe
           localStorage.removeItem('authToken');
           localStorage.removeItem('user');
         }
@@ -231,6 +227,9 @@ function App() {
     <Router>
       {!user ? (
         <Switch>
+          <Route path="/verify">
+            <VerifyEmail />
+          </Route>
           <Route path="/auth/callback">
             <AuthCallback onLogin={handleLogin} />
           </Route>

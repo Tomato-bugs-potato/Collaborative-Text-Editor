@@ -7,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { v4: uuidv4 } = require('uuid');
-const { createResponse, createErrorResponse, asyncHandler } = require('./shared-utils');
+const { createResponse, createErrorResponse, asyncHandler, setupMetrics } = require('./shared-utils');
 const prisma = require('./shared-utils/prisma-client');
 const { validate, registerSchema, loginSchema } = require('./src/utils/validation');
 const swaggerUi = require('swagger-ui-express');
@@ -15,6 +15,7 @@ const swaggerSpecs = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const INSTANCE_ID = process.env.INSTANCE_ID || 'auth-1';
 
 // ===================
 // MIDDLEWARE
@@ -22,6 +23,9 @@ const PORT = process.env.PORT || 3001;
 
 // Trust proxy - required for express-rate-limit behind nginx/load balancer
 app.set('trust proxy', 1);
+
+// Setup Prometheus metrics (before other middleware)
+setupMetrics(app, 'auth-service', INSTANCE_ID);
 
 app.use(cors());
 app.use(express.json());

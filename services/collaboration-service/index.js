@@ -1,22 +1,58 @@
+/**
+ * Collaboration Service
+ * 
+ * Real-time collaboration service handling WebSocket connections
+ * and operational transformation for document editing.
+ * Implements batch writing for OperationalTransforms to optimize DB performance.
+ */
+
 require("dotenv").config();
+
 const express = require('express');
 const { Server } = require('socket.io');
-const { Kafka } = require('kafkajs');
 const jwt = require('jsonwebtoken');
-const { createRedisClient } = require('./shared-utils/redis-client');
-const prisma = require('./shared-utils/prisma-client');
+const { Kafka } = require('kafkajs');
+const { createCluster } = require('redis');
+const { createAdapter } = require("@socket.io/redis-adapter");
+const { connect: dbConnect, prisma } = require('./db');
 
-const app = express();
+// Configuration
 const PORT = process.env.PORT || 3003;
+const INSTANCE_ID = process.env.INSTANCE_ID || 'collab-1';
+const PRESENCE_SERVICE_URL = process.env.PRESENCE_SERVICE_URL || 'http://presence-service:3005';
+const REDIS_NODES = (process.env.REDIS_NODES || 'redis-node-1:7001,redis-node-2:7002,redis-node-3:7003').split(',');
 
-// Create Redis clients for pub/sub
-const pubClient = createRedisClient('publisher');
-const subClient = createRedisClient('subscriber');
+// Express app
+const app = express();
+app.use(express.json());
+
+console.log(`[${INSTANCE_ID}] Starting Collaboration Service`);
+
+// Create Redis Cluster clients for pub/sub
+function createRedisCluster(name) {
+  const rootNodes = REDIS_NODES.map(node => {
+    const [host, port] = node.split(':');
+    return { socket: { host, port: parseInt(port) || 6379 } };
+  });
+
+  const client = createCluster({
+    rootNodes: rootNodes,
+    useReplicas: true
+  });
+
+  client.on('error', (err) => console.error(`[${INSTANCE_ID}] Redis Cluster ${name} error:`, err));
+  client.on('ready', () => console.log(`[${INSTANCE_ID}] Redis Cluster ${name} connected`));
+
+  return client;
+}
+
+const pubClient = createRedisCluster('publisher');
+const subClient = createRedisCluster('subscriber');
 
 // Kafka Configuration
 const kafka = new Kafka({
-  clientId: 'collaboration-service',
-  brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
+  clientId: INSTANCE_ID,
+  brokers: (process.env.KAFKA_BROKERS || 'kafka-1:9092,kafka-2:9093,kafka-3:9094').split(','),
   retry: {
     initialRetryTime: 100,
     retries: 8
@@ -24,32 +60,92 @@ const kafka = new Kafka({
 });
 
 const producer = kafka.producer();
+const consumer = kafka.consumer({ groupId: `collaboration-group-${INSTANCE_ID}` });
 let isProducerConnected = false;
 
-const connectProducer = async () => {
+const connectKafka = async () => {
   try {
     await producer.connect();
     isProducerConnected = true;
-    console.log('Kafka producer connected');
+    console.log(`[${INSTANCE_ID}] Kafka producer connected`);
+
+    await consumer.connect();
+    await consumer.subscribe({ topics: ['document-updates', 'document-events'], fromBeginning: false });
+    console.log(`[${INSTANCE_ID}] Kafka consumer connected and subscribed`);
+
+    await consumer.run({
+      eachMessage: async ({ topic, partition, message }) => {
+        try {
+          const data = JSON.parse(message.value.toString());
+          console.log(`[${INSTANCE_ID}] Received Kafka message on ${topic}:`, data);
+
+          if (topic === 'document-updates') {
+            const { documentId, version, status, userId } = data;
+            // Broadcast sync status to all clients in the document room
+            io.to(documentId).emit('document-synced', {
+              version,
+              status,
+              userId,
+              timestamp: new Date().toISOString()
+            });
+          } else if (topic === 'document-events') {
+            if (data.type === 'DOCUMENT_UPDATED') {
+              // Notify clients that the document was updated externally (e.g., via REST)
+              io.to(data.documentId).emit('document-external-update', {
+                documentId: data.documentId,
+                userId: data.userId,
+                timestamp: new Date().toISOString()
+              });
+            }
+          }
+        } catch (err) {
+          console.error(`[${INSTANCE_ID}] Error processing Kafka message:`, err);
+        }
+      }
+    });
   } catch (error) {
-    console.error('Failed to connect Kafka producer:', error);
-    // Retry logic could be added here
+    console.error(`[${INSTANCE_ID}] Failed to connect Kafka:`, error);
   }
 };
 
-connectProducer();
+connectKafka();
 
-// Middleware
-app.use(express.json());
+// Batching for OperationalTransforms
+let otBuffer = [];
+const BATCH_SIZE = 50;
+const FLUSH_INTERVAL = 2000; // 2 seconds
 
-// Health check
+async function flushOTs() {
+  if (otBuffer.length === 0) return;
+
+  const batch = [...otBuffer];
+  otBuffer = [];
+
+  try {
+    console.log(`[${INSTANCE_ID}] Flushing ${batch.length} OTs to database`);
+    await prisma.operationalTransform.createMany({
+      data: batch,
+      skipDuplicates: true
+    });
+  } catch (error) {
+    console.error(`[${INSTANCE_ID}] Error flushing OTs:`, error);
+    // Put back in buffer if failed (optional, depends on retry strategy)
+    otBuffer = [...batch, ...otBuffer];
+  }
+}
+
+setInterval(flushOTs, FLUSH_INTERVAL);
+
+// Health endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', service: 'collaboration-service' });
+  res.json({ status: 'healthy', service: 'collaboration-service', instance: INSTANCE_ID });
 });
 
-const { createAdapter } = require("@socket.io/redis-adapter");
+app.get('/ready', (req, res) => {
+  res.json({ ready: true });
+});
 
-// Socket.IO server with Redis adapter
+// Socket.IO setup
 const io = new Server({
   cors: {
     origin: "*",
@@ -57,15 +153,15 @@ const io = new Server({
   }
 });
 
-// Connect Redis clients and attach adapter
+// Connect Redis adapter
 Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
   io.adapter(createAdapter(pubClient, subClient));
-  console.log('Redis adapter connected');
+  console.log(`[${INSTANCE_ID}] Redis Cluster adapter connected`);
 }).catch(err => {
-  console.error('Redis adapter connection error:', err);
+  console.error(`[${INSTANCE_ID}] Redis Cluster adapter connection error:`, err);
 });
 
-// JWT authentication middleware for sockets
+// JWT authentication middleware for Socket.IO
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth.token;
@@ -82,91 +178,59 @@ io.use(async (socket, next) => {
   }
 });
 
-// Track active sessions
-const activeSessions = new Map();
-
-// Socket connection handling
+// Socket.IO connection handler
 io.on('connection', async (socket) => {
-  console.log(`User ${socket.userId} connected with socket ${socket.id}`);
+  console.log(`[${INSTANCE_ID}] User ${socket.userId} connected with socket ID ${socket.id}`);
 
-  // Handle joining a document
   socket.on('join-document', async (documentId) => {
     try {
-      // Check if user has access to this document (this would typically call document service)
-      // For now, we'll assume access is granted
-
-      // Create or update collaboration session
-      const session = await prisma.collaborationSession.upsert({
-        where: {
-          socketId: socket.id
-        },
-        update: {
-          userId: socket.userId,
-          status: 'active',
-          lastSeen: new Date()
-        },
-        create: {
-          documentId,
-          userId: socket.userId,
-          socketId: socket.id,
-          joinedAt: new Date(),
-          status: 'active'
-        }
-      });
-
-      activeSessions.set(socket.id, session);
-
+      console.log(`[${INSTANCE_ID}] User ${socket.userId} joining document: ${documentId}`);
       // Join the document room
       socket.join(documentId);
 
+      // Register presence via Presence Service
+      await fetch(`${PRESENCE_SERVICE_URL}/presence/${documentId}/${socket.userId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: socket.userEmail,
+          cursor: 0,
+          selection: null
+        })
+      });
+
       // Notify others in the document
       socket.to(documentId).emit('user-joined', {
-        userId: socket.userId,
-        sessionId: session.id
+        userId: socket.userId
       });
 
-      // Send current users in the document
-      const documentSessions = await prisma.collaborationSession.findMany({
-        where: {
-          documentId,
-          status: 'active'
-        }
-      });
+      // Get current users from Presence Service
+      const response = await fetch(`${PRESENCE_SERVICE_URL}/presence/${documentId}`);
+      const data = await response.json();
 
       socket.emit('document-joined', {
-        sessions: documentSessions
+        sessions: data.users || []
       });
 
     } catch (error) {
-      console.error('Error joining document:', error);
+      console.error(`[${INSTANCE_ID}] Error joining document:`, error);
       socket.emit('error', { message: 'Failed to join document' });
     }
   });
 
-  // Handle cursor position updates
   socket.on('cursor-move', async (data) => {
     try {
       const { documentId, position, selection } = data;
 
-      await prisma.cursorPosition.upsert({
-        where: {
-          documentId_userId: {
-            documentId,
-            userId: socket.userId
-          }
-        },
-        update: {
-          position,
-          selection,
-          updatedAt: new Date()
-        },
-        create: {
-          documentId,
-          userId: socket.userId,
-          position,
+      // Update presence (don't await to avoid blocking)
+      fetch(`${PRESENCE_SERVICE_URL}/presence/${documentId}/${socket.userId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cursor: position,
           selection
-        }
-      });
+        })
+      }).catch(err => console.error(`[${INSTANCE_ID}] Failed to update presence:`, err));
 
       // Broadcast cursor position to others in the document
       socket.to(documentId).emit('cursor-update', {
@@ -176,31 +240,29 @@ io.on('connection', async (socket) => {
       });
 
     } catch (error) {
-      console.error('Error updating cursor:', error);
+      console.error(`[${INSTANCE_ID}] Error updating cursor:`, error);
     }
   });
 
-  // Handle operational transforms
   socket.on('send-changes', async (data) => {
     try {
       const { documentId, operation, version } = data;
+      console.log(`[${INSTANCE_ID}] Received changes from user ${socket.userId} for doc ${documentId}, version ${version}`);
 
-      // Store the operation
-      const ot = await prisma.operationalTransform.create({
-        data: {
-          documentId,
-          userId: socket.userId,
-          operation,
-          version
-        }
+      // Buffer the operation for batch writing
+      otBuffer.push({
+        documentId,
+        userId: parseInt(socket.userId),
+        operation,
+        version: parseInt(version),
+        timestamp: new Date()
       });
 
-      // Broadcast the operation to others in the document
+      // Broadcast the operation to others in the document immediately
       socket.to(documentId).emit('receive-changes', {
         operation,
         version,
-        userId: socket.userId,
-        otId: ot.id
+        userId: socket.userId
       });
 
       // Publish to Kafka for reconciliation
@@ -222,68 +284,38 @@ io.on('connection', async (socket) => {
             ]
           });
         } catch (err) {
-          console.error('Failed to publish to Kafka:', err);
+          console.error(`[${INSTANCE_ID}] Failed to publish to Kafka:`, err);
         }
       }
 
+      // Flush if buffer gets too large
+      if (otBuffer.length >= BATCH_SIZE) {
+        flushOTs();
+      }
+
     } catch (error) {
-      console.error('Error processing changes:', error);
+      console.error(`[${INSTANCE_ID}] Error processing changes:`, error);
     }
   });
 
-  // Handle disconnection
   socket.on('disconnect', async () => {
-    try {
-      const session = activeSessions.get(socket.id);
-      if (session) {
-        // Update session status
-        await prisma.collaborationSession.update({
-          where: { id: session.id },
-          data: {
-            status: 'disconnected',
-            lastSeen: new Date()
-          }
-        });
-
-        // Notify others in the document
-        socket.to(session.documentId).emit('user-left', {
-          userId: socket.userId,
-          sessionId: session.id
-        });
-
-        activeSessions.delete(socket.id);
-      }
-
-      console.log(`User ${socket.userId} disconnected`);
-    } catch (error) {
-      console.error('Error handling disconnect:', error);
-    }
+    console.log(`[${INSTANCE_ID}] User ${socket.userId} disconnected`);
   });
 });
 
-// Get active sessions for a document (REST endpoint)
+// REST API endpoints
 app.get('/documents/:documentId/sessions', async (req, res) => {
   try {
     const { documentId } = req.params;
-
-    const sessions = await prisma.collaborationSession.findMany({
-      where: {
-        documentId,
-        status: 'active'
-      },
-      include: {
-        cursorPosition: true
-      }
-    });
-
-    res.json({ sessions });
+    const response = await fetch(`${PRESENCE_SERVICE_URL}/presence/${documentId}`);
+    const data = await response.json();
+    res.json({ sessions: data.users });
   } catch (error) {
-    console.error('Error fetching sessions:', error);
+    console.error(`[${INSTANCE_ID}] Error fetching sessions:`, error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Get operational transforms for a document (for sync)
 app.get('/documents/:documentId/transforms', async (req, res) => {
   try {
     const { documentId } = req.params;
@@ -299,7 +331,7 @@ app.get('/documents/:documentId/transforms', async (req, res) => {
 
     res.json({ transforms });
   } catch (error) {
-    console.error('Error fetching transforms:', error);
+    console.error(`[${INSTANCE_ID}] Error fetching transforms:`, error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -307,14 +339,25 @@ app.get('/documents/:documentId/transforms', async (req, res) => {
 // Start server
 const server = app.listen(PORT, async () => {
   try {
-    await prisma.$connect();
-    console.log(`Collaboration service running on port ${PORT}`);
-    console.log('Connected to database successfully');
+    await dbConnect();
+    console.log(`[${INSTANCE_ID}] Collaboration service running on port ${PORT}`);
+    console.log(`[${INSTANCE_ID}] Connected to database successfully`);
   } catch (error) {
-    console.error('Failed to connect to database:', error);
+    console.error(`[${INSTANCE_ID}] Failed to connect to database:`, error);
     process.exit(1);
   }
 });
 
-// Attach Socket.IO to the server
 io.attach(server);
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log(`[${INSTANCE_ID}] Received SIGTERM, flushing and shutting down`);
+  await flushOTs();
+  await producer.disconnect();
+  await consumer.disconnect();
+  await pubClient.quit();
+  await subClient.quit();
+  await prisma.$disconnect();
+  process.exit(0);
+});

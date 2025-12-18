@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest } = require('./shared-utils');
+const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest, setupMetrics } = require('./shared-utils');
 const prisma = require('./shared-utils/prisma-client');
 const { validate, createDocumentSchema, updateDocumentSchema, addCollaboratorSchema } = require('./src/utils/validation');
 const { connectProducer, publishDocumentEvent } = require('./src/utils/kafka-producer');
@@ -11,6 +11,10 @@ const swaggerSpecs = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
+const INSTANCE_ID = process.env.INSTANCE_ID || 'doc-1';
+
+// Setup Prometheus metrics
+setupMetrics(app, 'document-service', INSTANCE_ID);
 
 // Middleware
 app.use(cors());
