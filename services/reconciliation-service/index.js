@@ -10,11 +10,10 @@ require('dotenv').config();
 const express = require('express');
 const { Kafka } = require('kafkajs');
 const ot = require('ot-text');
-const { PrismaClient } = require('@prisma/client');
+const { prisma, prismaRead } = require('./shared-utils/prisma-client');
 const { setupMetrics, kafkaMessagesTotal } = require('./shared-utils');
 
 const app = express();
-const prisma = new PrismaClient();
 const instanceId = process.env.INSTANCE_ID || `reconcile-${Math.floor(Math.random() * 1000)}`;
 const PORT = process.env.PORT || 3004;
 
@@ -309,8 +308,8 @@ async function handleDocumentEvent(message, topic) {
  */
 async function run() {
   try {
-    await prisma.$connect();
-    console.log(`[${instanceId}] Connected to Database`);
+    // Shared prisma client handles connection and discovery
+    console.log(`[${instanceId}] Initializing Database connection via shared client`);
 
     await consumer.connect();
     await producer.connect();
@@ -373,7 +372,7 @@ errorTypes.forEach(type => {
       console.log(`[${instanceId}] ${type}:`, error);
       await consumer.disconnect();
       await producer.disconnect();
-      await prisma.$disconnect();
+      // Shared prisma client handles its own disconnect if needed
       process.exit(0);
     } catch (_) {
       process.exit(1);
@@ -388,7 +387,6 @@ signalTraps.forEach(type => {
       await flushBuffers();
       await consumer.disconnect();
       await producer.disconnect();
-      await prisma.$disconnect();
     } finally {
       process.kill(process.pid, type);
     }

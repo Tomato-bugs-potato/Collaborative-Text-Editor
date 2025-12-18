@@ -16,14 +16,16 @@ services:
       - ./postgres-config/master/pg_hba.conf:/etc/postgresql/pg_hba.conf
       - ./postgres-config/master/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh
       - ./postgres-config/master/init-dbs.sh:/docker-entrypoint-initdb.d/init-dbs.sh
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - ./postgres-config/master/check-dbs-ready.sh:/usr/local/bin/check-dbs-ready.sh
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_connections=500
     networks:
       - distributed-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U editor"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "chmod +x /usr/local/bin/check-dbs-ready.sh && /usr/local/bin/check-dbs-ready.sh"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
   
   postgres-replica-1:
     image: postgres:15
@@ -38,8 +40,9 @@ services:
     volumes:
       - postgres-replica1-data:/var/lib/postgresql/data
       - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - ./postgres-config/replica/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh
+    entrypoint: ["/bin/bash", "/usr/local/bin/replica-entrypoint.sh"]
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_connections=500
     depends_on:
       postgres-master:
         condition: service_healthy
@@ -49,7 +52,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U editor"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   postgres-replica-2:
     image: postgres:15
@@ -64,8 +67,9 @@ services:
     volumes:
       - postgres-replica2-data:/var/lib/postgresql/data
       - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - ./postgres-config/replica/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh
+    entrypoint: ["/bin/bash", "/usr/local/bin/replica-entrypoint.sh"]
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_connections=500
     depends_on:
       postgres-master:
         condition: service_healthy
@@ -75,7 +79,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U editor"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -286,7 +290,27 @@ services:
       - redis-node-6
     networks:
       - distributed-network
-  
+      
+  failover-service:
+    build:
+      context: ./services
+      dockerfile: failover-service/Dockerfile
+    container_name: failover-service
+    environment:
+      - REDIS_URL=redis://redis-node-1:7001
+      - DB_USER=editor
+      - DB_PASSWORD=secret
+      - DB_NAME=texteditor
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis-cluster-init
+      - postgres-master
+      - postgres-replica-1
+      - postgres-replica-2
+    networks:
+      - distributed-network
+
   api-gateway-1:
     build:
       context: ./services
@@ -478,6 +502,9 @@ services:
       - PORT=3003
       - INSTANCE_ID=collab-1
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
@@ -501,6 +528,9 @@ services:
       - PORT=3003
       - INSTANCE_ID=collab-2
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
@@ -525,6 +555,9 @@ services:
       - PORT=3003
       - INSTANCE_ID=collab-3
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
@@ -550,6 +583,9 @@ services:
       - CONSUMER_GROUP=reconciliation-group
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
       - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
+      - DB_HOST=postgres-master
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
     depends_on:
       postgres-master:
@@ -569,6 +605,9 @@ services:
       - INSTANCE_ID=reconcile-2
       - CONSUMER_GROUP=reconciliation-group
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - DB_HOST=postgres-master
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
     depends_on:
@@ -673,10 +712,14 @@ services:
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_ENDPOINT=http://minio:9000
       - AWS_BUCKET_NAME=editor-storage
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
     ports:
       - "3006:3006"
     depends_on:
-      - minio
+      minio:
+        condition: service_started
+      kafka-1:
+        condition: service_healthy
     networks:
       - distributed-network
     restart: unless-stopped

@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest, setupMetrics } = require('./shared-utils');
-const prisma = require('./shared-utils/prisma-client');
+const { prisma, prismaRead } = require('./shared-utils/prisma-client');
 const { validate, createDocumentSchema, updateDocumentSchema, addCollaboratorSchema } = require('./src/utils/validation');
 const { connectProducer, publishDocumentEvent } = require('./src/utils/kafka-producer');
 const { cache, invalidateCache } = require('./src/middleware/cache');
@@ -58,7 +58,7 @@ app.get('/health', (req, res) => {
  *         description: List of documents
  */
 app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
-  const documents = await prisma.document.findMany({
+  const documents = await prismaRead.document.findMany({
     where: {
       OR: [
         { ownerId: req.user.userId },
@@ -104,7 +104,7 @@ app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
 app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const document = await prisma.document.findFirst({
+  const document = await prismaRead.document.findFirst({
     where: {
       id,
       OR: [
@@ -213,7 +213,7 @@ app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asy
   const { title, data } = req.body;
 
   // Check if document exists and user has access
-  const existingDocument = await prisma.document.findFirst({
+  const existingDocument = await prismaRead.document.findFirst({
     where: {
       id,
       OR: [
@@ -283,7 +283,7 @@ app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) =>
   const { id } = req.params;
 
   // Check if document exists and user is owner
-  const existingDocument = await prisma.document.findFirst({
+  const existingDocument = await prismaRead.document.findFirst({
     where: {
       id,
       ownerId: req.user.userId
@@ -352,7 +352,7 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
   const { userId, role } = req.body;
 
   // Check if document exists and user is owner
-  const document = await prisma.document.findFirst({
+  const document = await prismaRead.document.findFirst({
     where: {
       id,
       ownerId: req.user.userId
@@ -377,7 +377,7 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
   }
 
   // Check if user is already a collaborator
-  const existingCollaborator = await prisma.collaborator.findUnique({
+  const existingCollaborator = await prismaRead.collaborator.findUnique({
     where: {
       documentId_userId: {
         documentId: id,
@@ -441,7 +441,7 @@ app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandl
   const { id, userId } = req.params;
 
   // Check if document exists and user is owner
-  const document = await prisma.document.findFirst({
+  const document = await prismaRead.document.findFirst({
     where: {
       id,
       ownerId: req.user.userId
@@ -478,9 +478,7 @@ app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandl
 // Start server
 app.listen(PORT, async () => {
   try {
-    await prisma.$connect();
     console.log(`Document service running on port ${PORT}`);
-    console.log('Connected to database successfully');
 
     // Connect Kafka producer
     await connectProducer();

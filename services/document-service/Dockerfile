@@ -21,7 +21,7 @@ COPY ./document-service/ .
 RUN npx prisma generate
 
 # Create startup script that runs migrations then starts the app
-RUN echo '#!/bin/sh\necho "Running Prisma migrations..."\nnpx prisma db push --skip-generate\necho "Starting document service..."\nnode index.js' > /app/start.sh && chmod +x /app/start.sh
+RUN echo '#!/bin/sh\necho "Attempting Prisma migrations..."\nnpx prisma db push --skip-generate || echo "Migration failed, skipping..."\necho "Starting document service..."\nnode index.js' > /app/start.sh && chmod +x /app/start.sh
 
 # Expose port
 EXPOSE 3002

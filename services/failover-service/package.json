@@ -1,0 +1,16 @@
+{
+    "name": "failover-service",
+    "version": "1.0.0",
+    "description": "Automatic database failover service",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "nodemon index.js"
+    },
+    "dependencies": {
+        "dockerode": "^4.0.2",
+        "dotenv": "^16.4.5",
+        "pg": "^8.11.5",
+        "ioredis": "^5.4.1"
+    }
+}

@@ -14,7 +14,7 @@ const jwt = require('jsonwebtoken');
 const { Kafka } = require('kafkajs');
 const { createCluster } = require('redis');
 const { createAdapter } = require("@socket.io/redis-adapter");
-const { connect: dbConnect, prisma } = require('./db');
+const { connect: dbConnect, prisma, prismaRead } = require('./db');
 
 // Configuration
 const PORT = process.env.PORT || 3003;
@@ -321,7 +321,7 @@ app.get('/documents/:documentId/transforms', async (req, res) => {
     const { documentId } = req.params;
     const { since } = req.query;
 
-    const transforms = await prisma.operationalTransform.findMany({
+    const transforms = await prismaRead.operationalTransform.findMany({
       where: {
         documentId,
         ...(since && { id: { gt: parseInt(since) } })
@@ -339,11 +339,9 @@ app.get('/documents/:documentId/transforms', async (req, res) => {
 // Start server
 const server = app.listen(PORT, async () => {
   try {
-    await dbConnect();
     console.log(`[${INSTANCE_ID}] Collaboration service running on port ${PORT}`);
-    console.log(`[${INSTANCE_ID}] Connected to database successfully`);
   } catch (error) {
-    console.error(`[${INSTANCE_ID}] Failed to connect to database:`, error);
+    console.error(`[${INSTANCE_ID}] Failed to start service:`, error);
     process.exit(1);
   }
 });
