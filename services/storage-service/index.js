@@ -2,7 +2,9 @@ require("dotenv").config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const AWS = require('aws-sdk');
+const { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { Upload } = require('@aws-sdk/lib-storage');
 const fs = require('fs');
 const path = require('path');
 const { Kafka } = require('kafkajs');
@@ -30,24 +32,33 @@ let s3;
 let BUCKET_NAME;
 
 if (STORAGE_TYPE === 's3' || STORAGE_TYPE === 'minio') {
-    s3 = new AWS.S3({
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    s3 = new S3Client({
+        region: 'us-east-1', // Required in v3 even for MinIO
+        credentials: {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+        },
         endpoint: process.env.AWS_ENDPOINT, // MinIO endpoint
-        s3ForcePathStyle: true, // Needed for MinIO
-        signatureVersion: 'v4'
+        forcePathStyle: true, // Needed for MinIO
     });
 
     BUCKET_NAME = process.env.AWS_BUCKET_NAME || 'editor-storage';
 
     // Ensure bucket exists
-    s3.createBucket({ Bucket: BUCKET_NAME }, (err, data) => {
-        if (err && err.code !== 'BucketAlreadyOwnedByYou') {
-            console.error('Error creating bucket:', err);
-        } else {
+    // Ensure bucket exists
+    const createBucket = async () => {
+        try {
+            await s3.send(new CreateBucketCommand({ Bucket: BUCKET_NAME }));
             console.log(`[${INSTANCE_ID}] Bucket ${BUCKET_NAME} ready`);
+        } catch (err) {
+            if (err.Code !== 'BucketAlreadyOwnedByYou' && err.name !== 'BucketAlreadyOwnedByYou') {
+                console.error('Error creating bucket:', err);
+            } else {
+                console.log(`[${INSTANCE_ID}] Bucket ${BUCKET_NAME} ready (already exists)`);
+            }
         }
-    });
+    };
+    createBucket();
 
     // Use memory storage for multer, then upload buffer to S3
     const storage = multer.memoryStorage();
@@ -80,7 +91,8 @@ const kafka = new Kafka({
     retry: {
         initialRetryTime: 100,
         retries: 8
-    }
+    },
+    logLevel: 4 // INFO level logging for more details
 });
 
 const consumer = kafka.consumer({ groupId: 'storage-group' });
@@ -88,8 +100,9 @@ const consumer = kafka.consumer({ groupId: 'storage-group' });
 const runKafka = async () => {
     try {
         await consumer.connect();
+        console.log(`[${INSTANCE_ID}] Kafka consumer connected to brokers: ${kafka.config.brokers.join(',')}`);
         await consumer.subscribe({ topic: 'document-snapshots', fromBeginning: false });
-        console.log(`[${INSTANCE_ID}] Kafka consumer connected for snapshots`);
+        console.log(`[${INSTANCE_ID}] Kafka consumer subscribed to snapshots`);
 
         await consumer.run({
             eachMessage: async ({ topic, partition, message }) => {
@@ -108,7 +121,12 @@ const runKafka = async () => {
                         };
 
                         console.log(`[${INSTANCE_ID}] Attempting to save snapshot to MinIO for doc ${documentId}, version ${version}`);
-                        await s3.upload(params).promise();
+                        console.log(`[${INSTANCE_ID}] Attempting to save snapshot to MinIO for doc ${documentId}, version ${version}`);
+                        const upload = new Upload({
+                            client: s3,
+                            params: params
+                        });
+                        await upload.done();
                         console.log(`[${INSTANCE_ID}] Snapshot successfully saved to MinIO: ${params.Key}`);
                     } else {
                         // Local storage backup
@@ -152,7 +170,11 @@ app.post('/snapshots', upload ? upload.single('snapshot') : (req, res, next) => 
         };
 
         try {
-            const data = await s3.upload(params).promise();
+            const upload = new Upload({
+                client: s3,
+                params: params
+            });
+            const data = await upload.done();
             res.json({
                 status: 'success',
                 file: {
@@ -184,13 +206,13 @@ app.get('/snapshots/:filename', async (req, res) => {
 
     if (STORAGE_TYPE === 's3' || STORAGE_TYPE === 'minio') {
         const params = {
-            Bucket: BUCKET_NAME,
             Key: filename,
             Expires: 60 * 5 // 5 minutes signed URL
         };
 
         try {
-            const url = await s3.getSignedUrlPromise('getObject', params);
+            const command = new GetObjectCommand(params);
+            const url = await getSignedUrl(s3, command, { expiresIn: 60 * 5 });
             res.redirect(url);
         } catch (err) {
             console.error('S3 Get Error:', err);
