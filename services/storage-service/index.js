@@ -100,7 +100,7 @@ const consumer = kafka.consumer({ groupId: 'storage-group' });
 const runKafka = async () => {
     try {
         await consumer.connect();
-        console.log(`[${INSTANCE_ID}] Kafka consumer connected to brokers: ${kafka.config.brokers.join(',')}`);
+        console.log(`[${INSTANCE_ID}] Kafka consumer connected to brokers: ${process.env.KAFKA_BROKERS || 'kafka-1:9092,kafka-2:9093,kafka-3:9094'}`);
         await consumer.subscribe({ topic: 'document-snapshots', fromBeginning: false });
         console.log(`[${INSTANCE_ID}] Kafka consumer subscribed to snapshots`);
 

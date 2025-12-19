@@ -16,7 +16,7 @@ COPY ./shared-utils ./shared-utils
 RUN cd ./shared-utils && npm install
 
 # Copy schema from collaboration service (since we share the DB)
-COPY ./collaboration-service/schema.prisma ./prisma/schema.prisma
+COPY ./document-service/schema.prisma ./prisma/schema.prisma
 
 # Generate Prisma Client
 RUN npx prisma generate
