@@ -125,7 +125,25 @@ export default function TextEditor() {
 
     // Then join collaboration session
     if (newsocket != null) {
-      newsocket.emit("join-document", id_doc);
+      const joinRoom = () => {
+        console.log("Emitting join-document for:", id_doc);
+        newsocket.emit("join-document", id_doc);
+      };
+
+      // Join immediately
+      joinRoom();
+
+      // Also join on reconnection
+      newsocket.on("connect", joinRoom);
+
+      // Handle connection errors
+      newsocket.on("connect_error", (err) => {
+        console.error("Socket connection error:", err);
+      });
+
+      newsocket.on("error", (err) => {
+        console.error("Socket error:", err);
+      });
 
       // Handle successful document join
       newsocket.on("document-joined", (data) => {
@@ -163,6 +181,16 @@ export default function TextEditor() {
           quill.setContents(content);
         }
       });
+
+      return () => {
+        newsocket.off("connect", joinRoom);
+        newsocket.off("connect_error");
+        newsocket.off("error");
+        newsocket.off("document-joined");
+        newsocket.off("user-joined");
+        newsocket.off("cursor-update");
+        newsocket.off("load-document");
+      };
     }
 
   }, [newsocket, quill, id_doc]);

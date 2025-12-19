@@ -91,10 +91,21 @@ app.use('/api/documents', authenticateRequest, createProxyMiddleware({
 // WebSocket proxy for Collaboration Service
 app.use('/socket.io', createProxyMiddleware({
   target: collaborationServices[0], // Default target
-  router: () => {
-    const target = collaborationServices[collaborationIndex % collaborationServices.length];
-    collaborationIndex++;
-    console.log(`[API Gateway] Routing to collaboration service: ${target}`);
+  router: (req) => {
+    // Sticky session based on client IP
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+
+    // Simple hash function for the IP
+    let hash = 0;
+    for (let i = 0; i < clientIp.length; i++) {
+      hash = ((hash << 5) - hash) + clientIp.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+
+    const index = Math.abs(hash) % collaborationServices.length;
+    const target = collaborationServices[index];
+
+    console.log(`[API Gateway] Routing socket connection from ${clientIp} to: ${target}`);
     return url.parse(target);
   },
   changeOrigin: true,
