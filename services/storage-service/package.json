@@ -4,6 +4,6 @@
     "description": "Storage service for document content and snapshots",
     "main": "index.js",
     "scripts": {
-        "start": "node index.js",
+        "start": "node index.js"
     }
 }
