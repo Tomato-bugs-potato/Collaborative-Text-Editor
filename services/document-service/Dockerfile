@@ -5,7 +5,7 @@ WORKDIR /app
 # Copy package files
 COPY ./document-service/package*.json ./
 
-# Install dependencies
+# Install service dependencies
 RUN npm install --omit=dev
 
 # Copy shared utils

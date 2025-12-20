@@ -259,6 +259,35 @@ app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asy
 
   res.json(createResponse(true, updatedDocument, 'Document updated successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}:
+ *   put:
+ *     summary: Update a document
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               data:
+ *                 type: object
+ *     responses:
+ *       200:
+ *         description: Document updated successfully
+ *       404:
+ *         description: Document not found
+ */
 
 // Delete document
 /**
@@ -406,6 +435,40 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
 
   res.status(201).json(createResponse(true, collaborator, 'Collaborator added successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}/collaborators:
+ *   post:
+ *     summary: Add a collaborator to a document
+ *     tags: [Collaborators]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - userId
+ *             properties:
+ *               userId:
+ *                 type: integer
+ *               role:
+ *                 type: string
+ *                 enum: [viewer, editor]
+ *     responses:
+ *       201:
+ *         description: Collaborator added successfully
+ *       404:
+ *         description: Document not found
+ *       409:
+ *         description: User is already a collaborator
+ */
 
 /**
  * @swagger
@@ -467,6 +530,29 @@ app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandl
 
   res.json(createResponse(true, null, 'Collaborator removed successfully'));
 }));
+/**
+ * @swagger
+ * /documents/{id}/collaborators/{userId}:
+ *   delete:
+ *     summary: Remove a collaborator from a document
+ *     tags: [Collaborators]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Collaborator removed successfully
+ *       404:
+ *         description: Document not found
+ */
 
 // Start server
 app.listen(PORT, async () => {

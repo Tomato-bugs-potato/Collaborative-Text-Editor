@@ -5,7 +5,7 @@ WORKDIR /app
 # Copy package files
 COPY ./auth-service/package*.json ./
 
-# Install dependencies
+# Install service dependencies
 RUN npm install --omit=dev
 
 # Copy shared utils
