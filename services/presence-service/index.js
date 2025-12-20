@@ -87,12 +87,9 @@ app.get('/presence/:documentId', async (req, res) => {
         }
 
         // 3. Fetch details for each user
-        const pipeline = redisClient.multi();
-        activeUserIds.forEach(userId => {
-            pipeline.get(`presence:${documentId}:${userId}`);
-        });
-
-        const results = await pipeline.exec();
+        const results = await Promise.all(activeUserIds.map(userId =>
+            redisClient.get(`presence:${documentId}:${userId}`)
+        ));
 
         const users = results
             .map(data => data ? JSON.parse(data) : null)

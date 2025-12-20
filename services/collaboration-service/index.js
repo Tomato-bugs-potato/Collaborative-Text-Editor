@@ -188,6 +188,9 @@ io.on('connection', async (socket) => {
       // Join the document room
       socket.join(documentId);
 
+      // Store documentId for disconnect handling
+      socket.documentId = documentId;
+
       // Register presence via Presence Service
       await fetch(`${PRESENCE_SERVICE_URL}/presence/${documentId}/${socket.userId}`, {
         method: 'POST',
@@ -300,6 +303,9 @@ io.on('connection', async (socket) => {
 
   socket.on('disconnect', async () => {
     console.log(`[${INSTANCE_ID}] User ${socket.userId} disconnected`);
+    if (socket.documentId) {
+      socket.to(socket.documentId).emit('user-left', { userId: socket.userId });
+    }
   });
 });
 

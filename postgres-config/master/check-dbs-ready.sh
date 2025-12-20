@@ -1,6 +1,4 @@
 #!/bin/bash
-# Enhanced healthcheck that verifies all databases are created
-# This ensures replicas don't try to sync before databases exist
 
 pg_isready -U editor || exit 1
 

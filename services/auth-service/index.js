@@ -17,21 +17,16 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const INSTANCE_ID = process.env.INSTANCE_ID || 'auth-1';
 
-// ===================
-// MIDDLEWARE
-// ===================
-
-// Trust proxy - required for express-rate-limit behind nginx/load balancer
+// Middleware
 app.set('trust proxy', 1);
 
-// Setup Prometheus metrics (before other middleware)
 setupMetrics(app, 'auth-service', INSTANCE_ID);
 
 app.use(cors());
 app.use(express.json());
 app.use(passport.initialize());
 
-// Rate limiting for auth endpoints
+// Rate limiting
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // limit each IP to 10 requests per windowMs
@@ -40,7 +35,6 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// General rate limiting
 const generalLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 100, // limit each IP to 100 requests per minute
@@ -51,9 +45,7 @@ const generalLimiter = rateLimit({
 
 app.use(generalLimiter);
 
-// ===================
-// GOOGLE OAUTH CONFIG
-// ===================
+// Google OAuth Config
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -103,9 +95,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     }));
 }
 
-// ===================
-// HELPER FUNCTIONS
-// ===================
+// Helper Functions
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
     { userId: user.id, email: user.email },
@@ -135,9 +125,7 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ===================
-// ROUTES
-// ===================
+// Routes
 
 // Health check
 app.get('/health', (req, res) => {
@@ -374,9 +362,7 @@ app.post('/verify-email', asyncHandler(async (req, res) => {
   res.json(createResponse(true, user, 'Email verified successfully'));
 }));
 
-// ===================
-// GOOGLE OAUTH ROUTES
-// ===================
+// Google OAuth Routes
 app.get('/auth/google',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
@@ -397,9 +383,7 @@ app.get('/auth/google/callback',
   }
 );
 
-// ===================
-// PROTECTED ROUTES
-// ===================
+// Protected Routes
 app.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
   const user = await prismaRead.user.findUnique({
     where: { id: req.user.userId },
@@ -480,9 +464,7 @@ app.post('/logout', authenticateToken, asyncHandler(async (req, res) => {
   res.json(createResponse(true, null, 'Logged out successfully'));
 }));
 
-// ===================
-// START SERVER
-// ===================
+// Start Server
 app.listen(PORT, async () => {
   try {
     console.log(`Auth service running on port ${PORT}`);

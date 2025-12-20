@@ -22,10 +22,8 @@ export default function VerifyEmail({ onVerified }) {
             const storedToken = sessionStorage.getItem('verificationToken');
             const storedEmail = sessionStorage.getItem('verificationEmail');
 
-            // If no stored token, the user might be on a different browser/device
-            // In production, you would verify against the server
+            // If no stored token, the user will be on a different browser/device
             if (!storedToken || storedEmail !== email) {
-                // For now, we'll trust the link and proceed with server verification
                 console.log('No stored token found, proceeding with server verification');
             } else if (token !== storedToken) {
                 setStatus('error');

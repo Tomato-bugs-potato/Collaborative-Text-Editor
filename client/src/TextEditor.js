@@ -19,7 +19,7 @@ export default function TextEditor() {
   console.log(id_doc)
 
 
-  //UseEffect1
+
   useEffect(() => {
     // Get JWT token from localStorage (assuming user is logged in)
     const token = localStorage.getItem('authToken');
@@ -46,7 +46,7 @@ export default function TextEditor() {
   }, [])
 
 
-  //UseEffect2: Handle incoming changes from other users
+  // Handle incoming changes from other users
   useEffect(() => {
     if (newsocket == null || quill == null) return;
 
@@ -61,7 +61,7 @@ export default function TextEditor() {
     };
   }, [newsocket, quill]);
 
-  //UseEffect3: Send local changes to other users
+  // Send local changes to other users
   useEffect(() => {
     if (newsocket == null || quill == null) return;
 
@@ -84,7 +84,7 @@ export default function TextEditor() {
     };
   }, [newsocket, quill, id_doc]);
 
-  //useEffect4: Load document content and join collaboration
+  // Load document content and join collaboration
   useEffect(() => {
     if (quill == null) return;
 
@@ -182,12 +182,19 @@ export default function TextEditor() {
         }
       });
 
+      // Handle user leaving
+      newsocket.on("user-left", (data) => {
+        console.log("User left:", data);
+        setActiveUsers(prev => prev.filter(user => user.userId !== data.userId));
+      });
+
       return () => {
         newsocket.off("connect", joinRoom);
         newsocket.off("connect_error");
         newsocket.off("error");
         newsocket.off("document-joined");
         newsocket.off("user-joined");
+        newsocket.off("user-left");
         newsocket.off("cursor-update");
         newsocket.off("load-document");
       };
@@ -195,7 +202,7 @@ export default function TextEditor() {
 
   }, [newsocket, quill, id_doc]);
 
-  //useEffect4.5: Periodic document saving
+  // Periodic document saving
   useEffect(() => {
     if (quill == null) return;
 
@@ -232,7 +239,7 @@ export default function TextEditor() {
     return () => clearInterval(saveInterval);
   }, [quill, id_doc]);
 
-  //useEffect4.6: Save on page unload
+  // Save on page unload
   useEffect(() => {
     if (quill == null) return;
 
@@ -265,7 +272,7 @@ export default function TextEditor() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [quill, id_doc]);
 
-  //useEffect5: Handle cursor movements (optional)
+  // Handle cursor movements (optional)
   useEffect(() => {
     if (newsocket == null || quill == null) return;
 

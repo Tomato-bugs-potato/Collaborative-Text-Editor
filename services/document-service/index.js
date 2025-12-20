@@ -366,17 +366,13 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
   // Validate that the user to be added exists (service-to-service call)
   try {
     const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
-    // Use the new serviceRequest with timeout
     await serviceRequest(`${authServiceUrl}/health`);
 
-    // In a real implementation, you'd call an endpoint like /api/auth/users/:userId
-    // For now, we'll assume the user exists if the ID is provided
   } catch (error) {
     console.error('Auth service communication error:', error);
     return res.status(500).json(createErrorResponse('Unable to validate user', 500));
   }
 
-  // Check if user is already a collaborator
   const existingCollaborator = await prismaRead.collaborator.findUnique({
     where: {
       documentId_userId: {
@@ -399,10 +395,8 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
     }
   });
 
-  // Invalidate cache since permissions changed
   await invalidateCache(id);
 
-  // Publish event
   await publishDocumentEvent('COLLABORATOR_ADDED', {
     documentId: id,
     addedBy: req.user.userId,
@@ -413,7 +407,6 @@ app.post('/documents/:id/collaborators', authenticateToken, validate(addCollabor
   res.status(201).json(createResponse(true, collaborator, 'Collaborator added successfully'));
 }));
 
-// Remove collaborator from document
 /**
  * @swagger
  * /documents/{id}/collaborators/{userId}:
