@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway-1:4000', 'api-gateway-2:4000']
+
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['auth-service-1:3001', 'auth-service-2:3001']
+
+  - job_name: 'document-service'
+    static_configs:
+      - targets: ['document-service-1:3002', 'document-service-2:3002']
+
+  - job_name: 'collaboration-service'
+    static_configs:
+      - targets: ['collaboration-service-1:3003', 'collaboration-service-2:3003', 'collaboration-service-3:3003']
+
+  - job_name: 'reconciliation-service'
+    static_configs:
+      - targets: ['reconciliation-service-1:3004', 'reconciliation-service-2:3004']
+
+  - job_name: 'presence-service'
+    static_configs:
+      - targets: ['presence-service:3005']
+
+  - job_name: 'storage-service'
+    static_configs:
+      - targets: ['storage-service:3006']
+
+  - job_name: 'kafka-lag-exporter'
+    static_configs:
+      - targets: ['kafka-lag-exporter:9999']

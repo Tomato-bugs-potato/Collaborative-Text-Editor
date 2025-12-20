@@ -1,23 +1,29 @@
-FROM node:18-alpine
+FROM node:18-slim
 
 WORKDIR /app
 
 # Copy package files
 COPY ./reconciliation-service/package*.json ./
 
+# Install system dependencies for Prisma
+RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
-RUN npm install --omit=dev
+RUN npm install
+
+# Copy shared utils
+COPY ./shared-utils ./shared-utils
+RUN cd ./shared-utils && npm install
+
+# Copy schema from collaboration service (since we share the DB)
+COPY ./document-service/schema.prisma ./prisma/schema.prisma
+
+# Generate Prisma Client
+RUN npx prisma generate
 
 # Copy application code
 COPY ./reconciliation-service/ .
 
-# Run as non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001 && \
-    chown -R nodejs:nodejs /app
-
-USER nodejs
-
 EXPOSE 3004
 
-CMD ["node", "index.js"]
+CMD ["npm", "start"]

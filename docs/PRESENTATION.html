@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Distributed Collaborative Text Editor</title>
+    <style>
+        body {
+            font-family: 'Calibri', 'Arial', sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #2E74B5;
+            border-bottom: 2px solid #2E74B5;
+            padding-bottom: 10px;
+            margin-top: 40px;
+        }
+
+        h2 {
+            color: #1F4E79;
+            margin-top: 30px;
+        }
+
+        .slide {
+            page-break-after: always;
+            border: 1px solid #ddd;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 20px auto;
+            border: 1px solid #eee;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+            color: #333;
+        }
+
+        .center {
+            text-align: center;
+        }
+
+        .cover-title {
+            font-size: 36px;
+            color: #2E74B5;
+            margin-top: 150px;
+        }
+
+        .cover-subtitle {
+            font-size: 24px;
+            color: #555;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Slide 1: Title -->
+    <div class="slide center">
+        <h1 class="cover-title">Distributed Collaborative Text Editor</h1>
+        <p class="cover-subtitle">Distributed Systems</p>
+    </div>
+
+    <!-- Slide 2: Why Distributed? -->
+    <div class="slide">
+        <h1>Why Distributed Architecture?</h1>
+        <p>We moved away from a monolith to solve specific challenges in real-time collaboration.</p>
+
+        <h2>The Challenges & Our Solutions</h2>
+        <table>
+            <tr>
+                <th>Challenge</th>
+                <th>Capability Added</th>
+                <th>How We Put It To Use</th>
+            </tr>
+            <tr>
+                <td><strong>Scale</strong></td>
+                <td>Microservices</td>
+                <td>Separated <em>Collaboration</em> (CPU-heavy) from <em>Auth</em> (I/O-heavy) so they scale
+                    independently.</td>
+            </tr>
+            <tr>
+                <td><strong>Data Loss</strong></td>
+                <td>Event Streaming (Kafka)</td>
+                <td>Decoupled writing. Users keep typing, and we safely queue every keystroke for background
+                    persistence.</td>
+            </tr>
+            <tr>
+                <td><strong>Latency</strong></td>
+                <td>In-Memory Mesh (Redis)</td>
+                <td>Created a "shared brain" for servers. Users on different nodes communicate instantly via Pub/Sub.
+                </td>
+            </tr>
+            <tr>
+                <td><strong>Downtime</strong></td>
+                <td>Replication</td>
+                <td>Added database replicas and failover services. If the Master crashes, the system self-heals.</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Slide 3: Overview -->
+    <div class="slide">
+        <h1>System Overview</h1>
+        <p>A <strong>Google Docs-like</strong> real-time collaborative text editor built with a scalable microservices
+            architecture.</p>
+
+        <h2>Key Features</h2>
+        <ul>
+            <li><strong>Real-time Collaboration</strong>: Multiple users editing simultaneously</li>
+            <li><strong>Microservices</strong>: 9 independent services for scalability</li>
+            <li><strong>Event-Driven</strong>: Kafka & Redis for asynchronous communication</li>
+            <li><strong>High Availability</strong>: Fault-tolerant database and service design</li>
+        </ul>
+    </div>
+
+    <!-- Slide 4: Global Architecture (Vector) -->
+    <div class="slide">
+        <h1>Global Architecture (Detail)</h1>
+        <p>The big picture view of the entire system (Vector View).</p>
+        <img src="./diagrams/image.png" alt="Global Architecture SVG">
+    </div>
+
+    <!-- Slide 6: Service Layer (Vector) -->
+    <div class="slide">
+        <h1>Service Layer Breakdown (Detail)</h1>
+        <p>Core vs. Support services (Vector View).</p>
+        <img src="./diagrams/service_layer.svg" alt="Service Layer SVG">
+    </div>
+
+    <!-- Slide 8: Real-Time Sync (Vector) -->
+    <div class="slide">
+        <h1>Real-Time Synchronization (Detail)</h1>
+        <p>WebSocket + Redis + Kafka flow (Vector View).</p>
+        <img src="./diagrams/realtime_sync_flow.svg" alt="Real-Time Sync Flow SVG">
+    </div>
+
+    <!-- Slide 9: Real-Time Sync (Rendered) -->
+    <div class="slide">
+        <h1>Real-Time Synchronization (Overview)</h1>
+        <p>WebSocket + Redis + Kafka flow (Rendered View).</p>
+        <img src="./diagrams/realtime_sync_flow_1766120831959.png" alt="Real-Time Sync Flow PNG">
+    </div>
+
+    <!-- Slide 10: Life of an Edit (Vector) -->
+    <div class="slide">
+        <h1>The Life of an Edit (Detail)</h1>
+        <p>Sequence diagram of a single keystroke (Vector View).</p>
+        <img src="./diagrams/life_of_an_edit.svg" alt="Life of an Edit SVG">
+    </div>
+
+    <!-- Slide 11: Life of an Edit (Rendered) -->
+    <div class="slide">
+        <h1>The Life of an Edit (Overview)</h1>
+        <p>Sequence diagram of a single keystroke (Rendered View).</p>
+        <img src="./diagrams/life_of_an_edit_1766120618511.png" alt="Life of an Edit PNG">
+    </div>
+
+    <!-- Slide 12: Infrastructure Overview -->
+    <div class="slide">
+        <h1>Infrastructure Overview</h1>
+        <p>Complete infrastructure map including MinIO and Zookeeper.</p>
+        <img src="./diagrams/infrastructure_layer_1766120691099.png" alt="Infrastructure Layer PNG">
+    </div>
+
+    <!-- Slide 13: Infrastructure - Kafka (Vector) -->
+    <div class="slide">
+        <h1>Infrastructure: Event Streaming (Kafka)</h1>
+        <p>Detailed view of Kafka Producers, Topics, and Consumers.</p>
+        <img src="./diagrams/infrastructure_kafka.svg" alt="Kafka Infrastructure SVG">
+    </div>
+
+    <!-- Slide 14: Infrastructure - Redis (Vector) -->
+    <div class="slide">
+        <h1>Infrastructure: Caching & Pub/Sub (Redis)</h1>
+        <p>Detailed view of Redis Cluster topology.</p>
+        <img src="./diagrams/infrastructure_redis.svg" alt="Redis Infrastructure SVG">
+    </div>
+
+    <!-- Slide 15: HA: Database (Vector) -->
+    <div class="slide">
+        <h1>High Availability: Database (Detail)</h1>
+        <p>PostgreSQL Master-Replica setup (Vector View).</p>
+        <img src="./diagrams/database_replication.svg" alt="Database Replication SVG">
+    </div>
+
+    <!-- Slide 16: HA: Database (Rendered) -->
+    <div class="slide">
+        <h1>High Availability: Database (Overview)</h1>
+        <p>PostgreSQL Master-Replica setup (Rendered View).</p>
+        <img src="./diagrams/database_replication_1766120855435.png" alt="Database Replication PNG">
+    </div>
+
+    <!-- Slide 17: Tech Stack -->
+    <div class="slide">
+        <h1>Key Technologies</h1>
+        <table>
+            <tr>
+                <th>Category</th>
+                <th>Tech Stack</th>
+            </tr>
+            <tr>
+                <td><strong>Frontend</strong></td>
+                <td>React.js, Quill.js</td>
+            </tr>
+            <tr>
+                <td><strong>Backend</strong></td>
+                <td>Node.js, Express</td>
+            </tr>
+            <tr>
+                <td><strong>Gateway</strong></td>
+                <td>NGINX, Custom Gateway</td>
+            </tr>
+            <tr>
+                <td><strong>Database</strong></td>
+                <td>PostgreSQL, Redis</td>
+            </tr>
+            <tr>
+                <td><strong>Messaging</strong></td>
+                <td>Apache Kafka</td>
+            </tr>
+            <tr>
+                <td><strong>Storage</strong></td>
+                <td>MinIO</td>
+            </tr>
+            <tr>
+                <td><strong>DevOps</strong></td>
+                <td>Docker, Docker Compose</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Slide 18: End -->
+    <div class="slide center">
+        <h1 style="margin-top: 150px;">Thank You</h1>
+        <p><strong>Distributed Collaborative Text Editor</strong></p>
+        <p><em>Scalable, Resilient, Real-Time.</em></p>
+    </div>
+
+</body>
+
+</html>

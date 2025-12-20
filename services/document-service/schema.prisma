@@ -15,6 +15,7 @@ model Document {
   ownerId      Int      // Reference to auth service user
   dateCreated  DateTime @default(now()) @db.Timestamp(6)
   lastModified DateTime @default(now()) @updatedAt @db.Timestamp(6)
+  version      Int      @default(1)
   collaborators Collaborator[]
 
   @@map("documents")

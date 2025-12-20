@@ -7,27 +7,26 @@ const rateLimit = require('express-rate-limit');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { v4: uuidv4 } = require('uuid');
-const { createResponse, createErrorResponse, asyncHandler } = require('./shared-utils');
-const prisma = require('./shared-utils/prisma-client');
+const { createResponse, createErrorResponse, asyncHandler, setupMetrics } = require('./shared-utils');
+const { prisma, prismaRead } = require('./shared-utils/prisma-client');
 const { validate, registerSchema, loginSchema } = require('./src/utils/validation');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./src/config/swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const INSTANCE_ID = process.env.INSTANCE_ID || 'auth-1';
 
-// ===================
-// MIDDLEWARE
-// ===================
-
-// Trust proxy - required for express-rate-limit behind nginx/load balancer
+// Middleware
 app.set('trust proxy', 1);
+
+setupMetrics(app, 'auth-service', INSTANCE_ID);
 
 app.use(cors());
 app.use(express.json());
 app.use(passport.initialize());
 
-// Rate limiting for auth endpoints
+// Rate limiting
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // limit each IP to 10 requests per windowMs
@@ -36,7 +35,6 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// General rate limiting
 const generalLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 100, // limit each IP to 100 requests per minute
@@ -47,9 +45,7 @@ const generalLimiter = rateLimit({
 
 app.use(generalLimiter);
 
-// ===================
-// GOOGLE OAUTH CONFIG
-// ===================
+// Google OAuth Config
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -59,13 +55,13 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     async (accessToken, refreshToken, profile, done) => {
       try {
         // Find or create user
-        let user = await prisma.user.findUnique({
+        let user = await prismaRead.user.findUnique({
           where: { googleId: profile.id }
         });
 
         if (!user) {
           // Check if email already exists
-          const existingUser = await prisma.user.findUnique({
+          const existingUser = await prismaRead.user.findUnique({
             where: { email: profile.emails[0].value }
           });
 
@@ -99,9 +95,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     }));
 }
 
-// ===================
-// HELPER FUNCTIONS
-// ===================
+// Helper Functions
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
     { userId: user.id, email: user.email },
@@ -131,9 +125,7 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ===================
-// ROUTES
-// ===================
+// Routes
 
 // Swagger UI
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
@@ -182,7 +174,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 app.post('/register', authLimiter, validate(registerSchema), asyncHandler(async (req, res) => {
   const { email, password, name } = req.body;
 
-  const existingUser = await prisma.user.findUnique({
+  const existingUser = await prismaRead.user.findUnique({
     where: { email }
   });
 
@@ -241,7 +233,7 @@ app.post('/register', authLimiter, validate(registerSchema), asyncHandler(async 
 app.post('/login', authLimiter, validate(loginSchema), asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  const user = await prisma.user.findUnique({
+  const user = await prismaRead.user.findUnique({
     where: { email }
   });
 
@@ -308,7 +300,7 @@ app.post('/refresh-token', asyncHandler(async (req, res) => {
     return res.status(401).json(createErrorResponse('Refresh token required', 401));
   }
 
-  const user = await prisma.user.findFirst({
+  const user = await prismaRead.user.findFirst({
     where: { refreshToken }
   });
 
@@ -373,9 +365,7 @@ app.post('/verify-email', asyncHandler(async (req, res) => {
   res.json(createResponse(true, user, 'Email verified successfully'));
 }));
 
-// ===================
-// GOOGLE OAUTH ROUTES
-// ===================
+// Google OAuth Routes
 app.get('/auth/google',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
@@ -396,11 +386,9 @@ app.get('/auth/google/callback',
   }
 );
 
-// ===================
-// PROTECTED ROUTES
-// ===================
+// Protected Routes
 app.get('/profile', authenticateToken, asyncHandler(async (req, res) => {
-  const user = await prisma.user.findUnique({
+  const user = await prismaRead.user.findUnique({
     where: { id: req.user.userId },
     select: {
       id: true,
@@ -425,7 +413,7 @@ app.get('/users/search', authenticateToken, asyncHandler(async (req, res) => {
     return res.status(400).json(createErrorResponse('Search query must be at least 2 characters', 400));
   }
 
-  const users = await prisma.user.findMany({
+  const users = await prismaRead.user.findMany({
     where: {
       AND: [
         { id: { not: req.user.userId } },
@@ -452,7 +440,7 @@ app.get('/users/search', authenticateToken, asyncHandler(async (req, res) => {
 app.get('/users/:id', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  const user = await prisma.user.findUnique({
+  const user = await prismaRead.user.findUnique({
     where: { id: parseInt(id) },
     select: {
       id: true,
@@ -480,19 +468,15 @@ app.post('/logout', authenticateToken, asyncHandler(async (req, res) => {
   res.json(createResponse(true, null, 'Logged out successfully'));
 }));
 
-// ===================
-// START SERVER
-// ===================
+// Start Server
 app.listen(PORT, async () => {
   try {
-    await prisma.$connect();
     console.log(`Auth service running on port ${PORT}`);
-    console.log('Connected to database successfully');
     if (process.env.GOOGLE_CLIENT_ID) {
       console.log('Google OAuth enabled');
     }
   } catch (error) {
-    console.error('Failed to connect to database:', error);
+    console.error('Failed to start service:', error);
     process.exit(1);
   }
 });

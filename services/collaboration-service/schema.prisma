@@ -48,3 +48,12 @@ model CursorPosition {
   @@unique([documentId, userId])
   @@map("cursor_positions")
 }
+
+model Document {
+  id           String   @id @db.VarChar(255)
+  data         Json?    // Rich text content
+  version      Int      @default(1)
+  lastModified DateTime @default(now()) @updatedAt @db.Timestamp(6)
+
+  @@map("documents")
+}

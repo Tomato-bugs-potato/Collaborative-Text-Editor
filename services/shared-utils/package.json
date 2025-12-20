@@ -17,6 +17,7 @@
   "dependencies": {
     "uuid": "^9.0.0",
     "kafkajs": "^2.2.4",
-    "redis": "^4.6.7"
+    "redis": "^4.6.7",
+    "prom-client": "^15.1.0"
   }
 }

@@ -165,3 +165,6 @@ client/dist/
 # Server builds
 server/build/
 server/dist/
+
+#ide rules
+rules/

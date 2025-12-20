@@ -1,5 +1,4 @@
 -- Initialize separate schemas for microservices
--- This script runs when PostgreSQL container starts for the first time
 
 -- Create schema for auth service
 CREATE SCHEMA IF NOT EXISTS auth;

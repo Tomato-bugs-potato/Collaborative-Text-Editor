@@ -13,11 +13,13 @@ export default function TextEditor() {
   const [newsocket, setSocket] = useState()
   const [quill, setQuill] = useState()
   const [version, setVersion] = useState(1)
+  const [activeUsers, setActiveUsers] = useState([])
+  const [currentUser, setCurrentUser] = useState(null)
 
   console.log(id_doc)
 
 
-  //UseEffect1
+
   useEffect(() => {
     // Get JWT token from localStorage (assuming user is logged in)
     const token = localStorage.getItem('authToken');
@@ -44,7 +46,7 @@ export default function TextEditor() {
   }, [])
 
 
-  //UseEffect2: Handle incoming changes from other users
+  // Handle incoming changes from other users
   useEffect(() => {
     if (newsocket == null || quill == null) return;
 
@@ -59,7 +61,7 @@ export default function TextEditor() {
     };
   }, [newsocket, quill]);
 
-  //UseEffect3: Send local changes to other users
+  // Send local changes to other users
   useEffect(() => {
     if (newsocket == null || quill == null) return;
 
@@ -82,7 +84,7 @@ export default function TextEditor() {
     };
   }, [newsocket, quill, id_doc]);
 
-  //useEffect4: Load document content and join collaboration
+  // Load document content and join collaboration
   useEffect(() => {
     if (quill == null) return;
 
@@ -123,12 +125,53 @@ export default function TextEditor() {
 
     // Then join collaboration session
     if (newsocket != null) {
-      newsocket.emit("join-document", id_doc);
+      const joinRoom = () => {
+        console.log("Emitting join-document for:", id_doc);
+        newsocket.emit("join-document", id_doc);
+      };
+
+      // Join immediately
+      joinRoom();
+
+      // Also join on reconnection
+      newsocket.on("connect", joinRoom);
+
+      // Handle connection errors
+      newsocket.on("connect_error", (err) => {
+        console.error("Socket connection error:", err);
+      });
+
+      newsocket.on("error", (err) => {
+        console.error("Socket error:", err);
+      });
 
       // Handle successful document join
       newsocket.on("document-joined", (data) => {
         console.log("Joined document collaboration:", data);
-        // Don't re-enable quill here since it's already enabled after loading
+        setActiveUsers(data.sessions || []);
+        // Find current user in sessions
+        const me = (data.sessions || []).find(u => u.userId === newsocket.userId);
+        if (me) setCurrentUser(me);
+      });
+
+      // Handle other users joining
+      newsocket.on("user-joined", (data) => {
+        console.log("User joined:", data);
+        // Refresh sessions from server
+        fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/collaboration/documents/${id_doc}/sessions`)
+          .then(res => res.json())
+          .then(data => {
+            if (data.sessions) setActiveUsers(data.sessions);
+          })
+          .catch(err => console.error("Error fetching sessions:", err));
+      });
+
+      // Handle cursor updates from others
+      newsocket.on("cursor-update", (data) => {
+        const { userId, position, selection } = data;
+        setActiveUsers(prev => prev.map(user =>
+          user.userId === userId ? { ...user, cursor: position, selection, lastSeen: Date.now() } : user
+        ));
       });
 
       // Handle document loading from collaboration service (if available)
@@ -138,11 +181,28 @@ export default function TextEditor() {
           quill.setContents(content);
         }
       });
+
+      // Handle user leaving
+      newsocket.on("user-left", (data) => {
+        console.log("User left:", data);
+        setActiveUsers(prev => prev.filter(user => user.userId !== data.userId));
+      });
+
+      return () => {
+        newsocket.off("connect", joinRoom);
+        newsocket.off("connect_error");
+        newsocket.off("error");
+        newsocket.off("document-joined");
+        newsocket.off("user-joined");
+        newsocket.off("user-left");
+        newsocket.off("cursor-update");
+        newsocket.off("load-document");
+      };
     }
 
   }, [newsocket, quill, id_doc]);
 
-  //useEffect4.5: Periodic document saving
+  // Periodic document saving
   useEffect(() => {
     if (quill == null) return;
 
@@ -179,7 +239,7 @@ export default function TextEditor() {
     return () => clearInterval(saveInterval);
   }, [quill, id_doc]);
 
-  //useEffect4.6: Save on page unload
+  // Save on page unload
   useEffect(() => {
     if (quill == null) return;
 
@@ -212,7 +272,7 @@ export default function TextEditor() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [quill, id_doc]);
 
-  //useEffect5: Handle cursor movements (optional)
+  // Handle cursor movements (optional)
   useEffect(() => {
     if (newsocket == null || quill == null) return;
 
@@ -244,7 +304,27 @@ export default function TextEditor() {
     setQuill(q_quill)
 
   }, [])
-  return <div className="container" ref={wrapperReference}></div>
+
+  return (
+    <div className="editor-container">
+      <div className="presence-bar">
+        <div className="active-users">
+          {activeUsers.map(user => (
+            <div
+              key={user.userId}
+              className={`user-badge ${user.userId === currentUser?.userId ? 'me' : ''}`}
+              title={user.name || user.userId}
+              style={{ backgroundColor: user.color || '#ccc' }}
+            >
+              {(user.name || user.userId.toString()).substring(0, 1).toUpperCase()}
+              {user.userId === currentUser?.userId && <span className="me-label">(You)</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="container" ref={wrapperReference}></div>
+    </div>
+  )
 
 
 }

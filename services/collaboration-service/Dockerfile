@@ -30,6 +30,9 @@ COPY ./collaboration-service/ .
 # Generate Prisma client (schema push happens at runtime)
 RUN npx prisma generate
 
+# Create startup script that runs migrations then starts the app
+RUN echo '#!/bin/sh\necho "Attempting Prisma migrations..."\nnpx prisma db push --skip-generate || echo "Migration failed, skipping..."\necho "Starting collaboration service..."\nnpm start' > /app/start.sh && chmod +x /app/start.sh
+
 EXPOSE 3003
 
-CMD ["npm", "start"]
+CMD ["/app/start.sh"]

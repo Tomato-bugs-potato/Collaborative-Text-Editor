@@ -17,9 +17,13 @@ RUN cd ./shared-utils && npm install
 # Copy application files
 COPY ./document-service/ .
 
-# Generate Prisma client (schema push happens at runtime)
+# Generate Prisma client
 RUN npx prisma generate
 
+# Create startup script that runs migrations then starts the app
+RUN echo '#!/bin/sh\necho "Attempting Prisma migrations..."\nnpx prisma db push --skip-generate || echo "Migration failed, skipping..."\necho "Starting document service..."\nnode index.js' > /app/start.sh && chmod +x /app/start.sh
+
+# Expose port
 EXPOSE 3002
 
-CMD ["npm", "start"]
+CMD ["/app/start.sh"]

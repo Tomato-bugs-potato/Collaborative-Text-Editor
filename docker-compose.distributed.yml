@@ -15,14 +15,17 @@ services:
       - ./postgres-config/master/postgresql.conf:/etc/postgresql/postgresql.conf
       - ./postgres-config/master/pg_hba.conf:/etc/postgresql/pg_hba.conf
       - ./postgres-config/master/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - ./postgres-config/master/init-dbs.sh:/docker-entrypoint-initdb.d/init-dbs.sh
+      - ./postgres-config/master/check-dbs-ready.sh:/usr/local/bin/check-dbs-ready.sh
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_connections=500
     networks:
       - distributed-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U editor"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "chmod +x /usr/local/bin/check-dbs-ready.sh && /usr/local/bin/check-dbs-ready.sh"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
   
   postgres-replica-1:
     image: postgres:15
@@ -37,8 +40,9 @@ services:
     volumes:
       - postgres-replica1-data:/var/lib/postgresql/data
       - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - ./postgres-config/replica/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh
+    entrypoint: ["/bin/bash", "/usr/local/bin/replica-entrypoint.sh"]
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_connections=500
     depends_on:
       postgres-master:
         condition: service_healthy
@@ -48,7 +52,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U editor"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
   postgres-replica-2:
     image: postgres:15
     container_name: postgres-replica-2
@@ -62,8 +67,9 @@ services:
     volumes:
       - postgres-replica2-data:/var/lib/postgresql/data
       - ./postgres-config/replica/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./postgres-config/replica/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
-    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+      - ./postgres-config/replica/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh
+    entrypoint: ["/bin/bash", "/usr/local/bin/replica-entrypoint.sh"]
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c max_connections=500
     depends_on:
       postgres-master:
         condition: service_healthy
@@ -73,7 +79,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U editor"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -104,15 +110,25 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092
-      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
       KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_DEFULT_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
     networks:
       - distributed-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 10s
@@ -132,15 +148,25 @@ services:
       KAFKA_BROKER_ID: 2
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9093
-      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
       KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_DEFULT_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
     networks:
       - distributed-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
       interval: 10s
@@ -157,18 +183,28 @@ services:
       - "9094:9094"
       - "29094:29094"
     environment:
-      KAFKA_BOOKER_ID: 1
+      KAFKA_BROKER_ID: 3
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9094
-      KAFKA_LISTNER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTNER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
       KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_DEFULT_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
     networks:
       - distributed-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9094"]
       interval: 10s
@@ -198,8 +234,6 @@ services:
     command: redis-server --port 7001 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-1 --cluster-preferred-endpoint-type hostname
     ports:
       - "7001:7001"
-    volumes:
-      - redis-node-1-data:/data
     networks:
       - distributed-network
 
@@ -210,8 +244,6 @@ services:
     command: redis-server --port 7002 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-2 --cluster-preferred-endpoint-type hostname
     ports:
       - "7002:7002"
-    volumes:
-      - redis-node-2-data:/data
     networks:
       - distributed-network
 
@@ -222,8 +254,6 @@ services:
     command: redis-server --port 7003 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-3 --cluster-preferred-endpoint-type hostname
     ports:
       - "7003:7003"
-    volumes:
-      - redis-node-3-data:/data
     networks:
       - distributed-network
 
@@ -234,8 +264,6 @@ services:
     command: redis-server --port 7004 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-4 --cluster-preferred-endpoint-type hostname
     ports:
       - "7004:7004"
-    volumes:
-      - redis-node-4-data:/data
     networks:
       - distributed-network
 
@@ -246,8 +274,6 @@ services:
     command: redis-server --port 7005 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-5 --cluster-preferred-endpoint-type hostname
     ports:
       - "7005:7005"
-    volumes:
-      - redis-node-5-data:/data
     networks:
       - distributed-network
 
@@ -258,8 +284,6 @@ services:
     command: redis-server --port 7006 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --bind 0.0.0.0 --protected-mode no --cluster-announce-hostname redis-node-6 --cluster-preferred-endpoint-type hostname
     ports:
       - "7006:7006"
-    volumes:
-      - redis-node-6-data:/data
     networks:
       - distributed-network
 
@@ -284,7 +308,27 @@ services:
       - redis-node-6
     networks:
       - distributed-network
-  
+      
+  failover-service:
+    build:
+      context: ./services
+      dockerfile: failover-service/Dockerfile
+    container_name: failover-service
+    environment:
+      - REDIS_URL=redis://redis-node-1:7001
+      - DB_USER=editor
+      - DB_PASSWORD=secret
+      - DB_NAME=texteditor
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis-cluster-init
+      - postgres-master
+      - postgres-replica-1
+      - postgres-replica-2
+    networks:
+      - distributed-network
+
   api-gateway-1:
     build:
       context: ./services
@@ -476,9 +520,13 @@ services:
       - PORT=3003
       - INSTANCE_ID=collab-1
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
+      - PRESENCE_SERVICE_URL=http://presence-service:3005
     ports:
       - "3003:3003"
     depends_on:
@@ -498,9 +546,13 @@ services:
       - PORT=3003
       - INSTANCE_ID=collab-2
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
+      - PRESENCE_SERVICE_URL=http://presence-service:3005
     ports:
       - "3013:3003"
     depends_on:
@@ -510,6 +562,7 @@ services:
         condition: service_started
     networks:
       - distributed-network
+    command: sh -c "echo 'Skipping prisma migrations for replica....' && npm start"
 
   collaboration-service-3:
     build:
@@ -520,9 +573,13 @@ services:
       - PORT=3003
       - INSTANCE_ID=collab-3
       - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - REDIS_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
       - JWT_SECRET=your-super-secret-jwt-key
+      - PRESENCE_SERVICE_URL=http://presence-service:3005
     ports:
       - "3023:3003"
     depends_on:
@@ -532,6 +589,7 @@ services:
         condition: service_started
     networks:
       - distributed-network
+    command: sh -c "echo 'Skipping prisma migrations for replica....' && npm start"
 
   reconciliation-service-1:
     build:
@@ -541,6 +599,10 @@ services:
     environment:
       - INSTANCE_ID=reconcile-1
       - CONSUMER_GROUP=reconciliation-group
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_docs
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - DB_HOST=postgres-master
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
     depends_on:
@@ -560,6 +622,10 @@ services:
     environment:
       - INSTANCE_ID=reconcile-2
       - CONSUMER_GROUP=reconciliation-group
+      - DATABASE_URL=postgresql://editor:secret@postgres-master:5432/texteditor_collab
+      - DB_HOST=postgres-master
+      - DB_REPLICA_1=postgres-replica-1
+      - DB_REPLICA_2=postgres-replica-2
       - DB_HOST=postgres-master
       - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
     depends_on:
@@ -567,6 +633,23 @@ services:
         condition: service_healthy
       kafka-1:
         condition: service_healthy
+    networks:
+      - distributed-network
+    restart: unless-stopped
+
+  presence-service:
+    build:
+      context: ./services
+      dockerfile: presence-service/Dockerfile
+    container_name: presence-service
+    environment:
+      - PORT=3005
+      - INSTANCE_ID=presence-1
+      - REDIS_URL=redis://redis-node-1:7001
+    ports:
+      - "3005:3005"
+    depends_on:
+      - redis-cluster-init
     networks:
       - distributed-network
     restart: unless-stopped
@@ -592,7 +675,6 @@ services:
       timeout: 5s
       retries: 3
 
-
   client:
     build:
       context: ./client
@@ -600,30 +682,10 @@ services:
         REACT_APP_API_URL: http://localhost
         REACT_APP_EMAILJS_SERVICE_ID: service_rltt2o9
         REACT_APP_EMAILJS_TEMPLATE_ID: template_bj1va2w
-        REACT_APP_EMAILJS_PUBLIC_KEY: GsEMmAKjKPLWQ91Eu
-    container_name: texteditor-client
-    restart: unless-stopped
-    ports:
-      - "3000:80"
-    depends_on:
-      nginx:
-        condition: service_healthy
-    networks:
-      - distributed-network
-
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
     ports:
       - "5050:80"
     networks:
       - distributed-network
-    profiles:
-      - tools
 
   redis-commander:
     image: rediscommander/redis-commander:latest
@@ -640,6 +702,80 @@ services:
     profiles:
       - tools
 
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - distributed-network
+
+  storage-service:
+    build:
+      context: ./services
+      dockerfile: storage-service/Dockerfile
+    container_name: storage-service
+    environment:
+      - PORT=3006
+      - INSTANCE_ID=storage-1
+      - STORAGE_TYPE=minio
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ENDPOINT=http://minio:9000
+      - AWS_BUCKET_NAME=editor-storage
+      - KAFKA_BROKERS=kafka-1:9092,kafka-2:9093,kafka-3:9094
+    ports:
+      - "3006:3006"
+    depends_on:
+      minio:
+        condition: service_started
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - distributed-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3007:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - distributed-network
+
+  kafka-lag-exporter:
+    image: seglo/kafka-lag-exporter:0.8.2
+    container_name: kafka-lag-exporter
+    volumes:
+      - ./monitoring/kafka-lag-exporter/application.conf:/opt/docker/conf/application.conf:ro
+    ports:
+      - "9999:9999"
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - distributed-network
+    restart: unless-stopped
+
 networks:
   distributed-network:
     driver: bridge
@@ -648,9 +784,4 @@ volumes:
   postgres-master-data:
   postgres-replica1-data:
   postgres-replica2-data:
-  redis-node-1-data:
-  redis-node-2-data:
-  redis-node-3-data:
-  redis-node-4-data:
-  redis-node-5-data:
-  redis-node-6-data:
+  minio-data:
