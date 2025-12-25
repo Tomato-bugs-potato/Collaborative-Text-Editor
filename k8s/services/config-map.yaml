@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: common-config
+  namespace: default
+data:
+  DB_HOST: "postgres-master"
+  DB_REPLICA_1: "postgres-replica-0.postgres-replica.default.svc.cluster.local"
+  DB_REPLICA_2: "postgres-replica-1.postgres-replica.default.svc.cluster.local"
+  REDIS_NODES: "redis-cluster-0.redis-cluster:6379,redis-cluster-1.redis-cluster:6379,redis-cluster-2.redis-cluster:6379,redis-cluster-3.redis-cluster:6379,redis-cluster-4.redis-cluster:6379,redis-cluster-5.redis-cluster:6379"
+  KAFKA_BROKERS: "kafka:9092"
+  AUTH_SERVICE_URL: "http://auth-service:3001"
+  DOCUMENT_SERVICE_URL: "http://document-service:3002"
+  COLLABORATION_SERVICE_URL: "http://collaboration-service:3003"
+  PRESENCE_SERVICE_URL: "http://presence-service:3005"
+  STORAGE_SERVICE_URL: "http://storage-service:3006"

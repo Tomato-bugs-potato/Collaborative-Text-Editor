@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collaboration-service
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: collaboration-service
+  template:
+    metadata:
+      labels:
+        app: collaboration-service
+    spec:
+      initContainers:
+        # Wait for PostgreSQL master to be ready
+        - name: wait-for-postgres
+          image: postgres:15
+          command: ['sh', '-c', 
+            'until pg_isready -h postgres-master -U editor -d texteditor_collab; do echo "Waiting for postgres..."; sleep 2; done;
+             echo "PostgreSQL is ready!"']
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+        # Run Prisma migrations
+        - name: run-migrations
+          image: collaboration-service:latest
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'npx prisma db push --skip-generate']
+          envFrom:
+            - configMapRef:
+                name: common-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://editor:$(DB_PASSWORD)@postgres-master:5432/texteditor_collab"
+      containers:
+        - name: collaboration-service
+          image: collaboration-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3003
+          envFrom:
+            - configMapRef:
+                name: common-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: PORT
+              value: "3003"
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DATABASE_URL
+              value: "postgresql://editor:$(DB_PASSWORD)@$(DB_HOST):5432/texteditor_collab"
+          readinessProbe:
+            tcpSocket:
+              port: 3003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: collaboration-service
+  namespace: default
+spec:
+  ports:
+    - port: 3003
+      targetPort: 3003
+  selector:
+    app: collaboration-service

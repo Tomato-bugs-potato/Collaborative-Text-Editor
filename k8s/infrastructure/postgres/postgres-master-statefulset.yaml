@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-master
+  namespace: default
+spec:
+  serviceName: postgres-master
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      role: master
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: master
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          env:
+            - name: POSTGRES_USER
+              value: editor
+            - name: POSTGRES_PASSWORD
+              value: secret
+            - name: POSTGRES_DB
+              value: texteditor
+            - name: POSTGRES_INITDB_ARGS
+              value: "-E UTF8"
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: postgres-master-data
+              mountPath: /var/lib/postgresql/data
+            - name: config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: master-postgresql.conf
+            - name: config
+              mountPath: /etc/postgresql/pg_hba.conf
+              subPath: master-pg_hba.conf
+            - name: config
+              mountPath: /docker-entrypoint-initdb.d/init-replication.sh
+              subPath: master-init-replication.sh
+            - name: config
+              mountPath: /docker-entrypoint-initdb.d/init-dbs.sh
+              subPath: master-init-dbs.sh
+            - name: config
+              mountPath: /usr/local/bin/check-dbs-ready.sh
+              subPath: master-check-dbs-ready.sh
+          args: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "max_connections=500"]
+          readinessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "/usr/local/bin/check-dbs-ready.sh"]
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: config
+          configMap:
+            name: postgres-config
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-master-data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 1Gi

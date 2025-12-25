@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-replica
+  namespace: default
+spec:
+  serviceName: postgres-replica
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postgres
+      role: replica
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: replica
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          env:
+            - name: POSTGRES_USER
+              value: editor
+            - name: POSTGRES_PASSWORD
+              value: secret
+            - name: PGUSER
+              value: editor
+            - name: POSTGRES_MASTER_HOST
+              value: postgres-master
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: postgres-replica-data
+              mountPath: /var/lib/postgresql/data
+            - name: config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: replica-postgresql.conf
+            - name: config
+              mountPath: /usr/local/bin/replica-entrypoint.sh
+              subPath: replica-entrypoint.sh
+          command: ["/bin/bash", "/usr/local/bin/replica-entrypoint.sh"]
+          args: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "max_connections=500"]
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "pg_isready -U editor"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+      volumes:
+        - name: config
+          configMap:
+            name: postgres-config
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-replica-data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 1Gi

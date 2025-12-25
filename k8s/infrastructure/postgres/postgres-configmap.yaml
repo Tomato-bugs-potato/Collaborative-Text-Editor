@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: default
+data:
+  # Master Configuration
+  master-postgresql.conf: |
+    # Connection Settings
+    listen_addresses = '*'
+    max_connections = 500
+
+    # HBA Configuration file path
+    hba_file = '/etc/postgresql/pg_hba.conf'
+
+    # Replication
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 64MB
+    hot_standby = on
+
+    # Logging
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'mod'
+    log_replication_commands = on
+
+    # Performance
+    shared_buffers = 256MB
+    effective_cache_size = 1GB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 100
+    work_mem = 4MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+
+  master-pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    # Local connections
+    local   all             all                                     trust
+    host    all             all             127.0.0.1/32            trust
+    host    all             all             ::1/128                 trust
+
+    # Allow replication connections from replicas
+    host    replication     replicator      0.0.0.0/0               trust
+    host    replication     replicator      ::0/0                   trust
+
+    # Allow all database connections
+    host    all             all             0.0.0.0/0               trust
+
+  master-init-replication.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Initializing PostgreSQL master for replication"
+
+    # Create replication user and additional databases
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+        -- Create replication user if it doesn't exist
+        DO \$\$
+        BEGIN
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'replicator') THEN
+                CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'replicator_password';
+            END IF;
+        END
+        \$\$;
+        
+        -- Grant necessary permissions
+        GRANT CONNECT ON DATABASE $POSTGRES_DB TO replicator;
+
+        -- Create additional databases
+        SELECT 'CREATE DATABASE texteditor_collab' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'texteditor_collab')\gexec
+        SELECT 'CREATE DATABASE texteditor_docs' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'texteditor_docs')\gexec
+    EOSQL
+
+    echo "Master replication setup completed"
+
+  master-init-dbs.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Starting database initialization..."
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+        CREATE DATABASE texteditor_docs;
+        CREATE DATABASE texteditor_collab;
+        GRANT ALL PRIVILEGES ON DATABASE texteditor_docs TO editor;
+        GRANT ALL PRIVILEGES ON DATABASE texteditor_collab TO editor;
+    EOSQL
+
+    echo "Databases 'texteditor_docs' and 'texteditor_collab' created and permissions granted."
+
+  master-check-dbs-ready.sh: |
+    #!/bin/bash
+
+    pg_isready -U editor || exit 1
+
+    # Check if all required databases exist
+    psql -U editor -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='texteditor'" | grep -q 1 || exit 1
+    psql -U editor -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='texteditor_docs'" | grep -q 1 || exit 1
+    psql -U editor -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='texteditor_collab'" | grep -q 1 || exit 1
+
+    # Check if replication user exists
+    psql -U editor -d postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1 || exit 1
+
+    echo "Master is fully ready with all databases and replication user"
+    exit 0
+
+  # Replica Configuration
+  replica-postgresql.conf: |
+    # Connection Settings
+    listen_addresses = '*'
+    max_connections = 100
+
+    # Replication Settings
+    wal_level = replica
+    hot_standby = on
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 64MB
+
+    # Read-only mode
+    hot_standby_feedback = on
+    max_standby_streaming_delay = 30s
+
+    # Logging
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'mod'
+
+    # Performance
+    shared_buffers = 256MB
+    effective_cache_size = 1GB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 4MB
+
+  replica-entrypoint.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "=== PostgreSQL Replica Entrypoint ==="
+
+    # Check if data directory is empty or not initialized
+    if [ -z "$(ls -A /var/lib/postgresql/data 2>/dev/null)" ] || [ ! -f "/var/lib/postgresql/data/PG_VERSION" ]; then
+        echo "Data directory is empty or not initialized. Setting up as replica..."
+        
+        # Wait for master to be ready
+        echo "Waiting for master to be ready..."
+        until PGPASSWORD=secret pg_isready -h "$POSTGRES_MASTER_HOST" -U editor -q; do
+            echo "Waiting for master at $POSTGRES_MASTER_HOST..."
+            sleep 2
+        done
+        
+        echo "Master is accepting connections. Waiting for databases to be created..."
+        
+        # Wait for all required databases to exist
+        for db in texteditor texteditor_docs texteditor_collab; do
+            until PGPASSWORD=secret psql -h "$POSTGRES_MASTER_HOST" -U editor -d "$db" -c "SELECT 1" > /dev/null 2>&1; do
+                echo "Waiting for database '$db' on master..."
+                sleep 3
+            done
+            echo "Database '$db' is ready on master."
+        done
+        
+        # Wait for replication user
+        until PGPASSWORD=secret psql -h "$POSTGRES_MASTER_HOST" -U editor -d postgres -c "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1; do
+            echo "Waiting for replicator user on master..."
+            sleep 2
+        done
+        
+        echo "Master is fully ready. Starting pg_basebackup..."
+        
+        # Clean any partial data
+        rm -rf /var/lib/postgresql/data/*
+        
+        # Perform base backup
+        PGPASSWORD='replicator_password' pg_basebackup \
+            -h "$POSTGRES_MASTER_HOST" \
+            -D /var/lib/postgresql/data \
+            -U replicator \
+            -v -P -R -X stream
+        
+        # Ensure standby.signal exists (for PostgreSQL 12+)
+        touch /var/lib/postgresql/data/standby.signal
+        
+        # Set proper permissions
+        chown -R postgres:postgres /var/lib/postgresql/data
+        chmod 700 /var/lib/postgresql/data
+        
+        echo "=== Replica setup completed! ==="
+    else
+        echo "Data directory already initialized. Starting as-is..."
+    fi
+
+    # Call the original PostgreSQL entrypoint
+    exec docker-entrypoint.sh "$@"
