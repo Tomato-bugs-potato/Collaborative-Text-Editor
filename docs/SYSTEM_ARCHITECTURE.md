@@ -379,16 +379,26 @@ The system uses a **Centralized OT** approach to maintain document consistency.
 ### Failover Logic
 The `failover-service` acts as a watchdog.
 - **Detection**: Pings Master every 5 seconds. If 3 consecutive pings fail, Master is declared dead.
+- **State Tracking**: Master identity is stored in Redis (`pg:current_master`) to survive service restarts.
 - **Promotion**:
-    1.  Selects Replica with highest LSN (Log Sequence Number).
+    1.  Selects first healthy Replica.
     2.  Executes `pg_ctl promote`.
-    3.  Updates DNS/Service discovery to point `postgres-master` to the new IP.
+    3.  Registers new master in Redis.
+    4.  Reconfigures remaining replicas via `pg_basebackup` to follow new master.
 
 ### Risk Mitigation (Split-Brain)
 - **Problem**: Old Master might come back online and think it's still Master.
-- **Mitigation (STONITH)**:
-    - *Current*: The `failover-service` attempts to shut down the old Master container via Docker API.
-    - *Status*: **Implemented**. The service now explicitly stops the old master container before promotion.
+- **Mitigation (STONITH + Rogue Detection)**:
+    - *STONITH*: The `failover-service` stops the old Master container via Docker API before promotion.
+    - *Rogue Master Detection*: On each monitoring cycle, if a node reports as Master but isn't the registered master in Redis, it is immediately stopped.
+    - *Status*: **Fully Implemented**. The service prevents split-brain via fencing and continuous rogue detection.
+
+### Replica Reconfiguration
+After failover, remaining replicas are automatically reconfigured:
+1. Replica container is stopped
+2. Data directory is wiped
+3. `pg_basebackup` copies data from new master with `-R` flag
+4. Replica restarts and begins streaming replication from new master
 
 ---
 
