@@ -1,0 +1,25 @@
+{
+    "name": "distributed-system-tests",
+    "version": "1.0.0",
+    "description": "Comprehensive testing framework for distributed text editor system",
+    "scripts": {
+        "test:load": "node load-testing/multi-user-simulator.js",
+        "test:failover": "node chaos/database-failover.test.js",
+        "test:e2e": "jest e2e/full-workflow.test.js",
+        "test:all": "npm run test:load && npm run test:failover && npm run test:e2e",
+        "dashboard": "node monitoring/dashboard.js",
+        "demo": "node demo/showcase.js"
+    },
+    "dependencies": {
+        "express": "^4.18.2",
+        "socket.io-client": "^4.5.0",
+        "axios": "^1.4.0",
+        "@kubernetes/client-node": "^0.20.0",
+        "chalk": "^4.1.2",
+        "ora": "^5.4.1",
+        "ws": "^8.13.0"
+    },
+    "devDependencies": {
+        "jest": "^29.5.0"
+    }
+}
