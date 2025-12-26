@@ -58,7 +58,18 @@ npm run test:e2e
 ```
 
 ### Start Monitoring Dashboard
+
+**Option 1: As a Kubernetes Service (Recommended)**
 ```bash
+# The dashboard runs as a microservice in your cluster
+kubectl apply -f ../k8s/services/testing-dashboard.yaml
+
+# Access at: http://localhost:30100
+```
+
+**Option 2: Standalone (Development)**
+```bash
+cd test
 npm run dashboard
 
 # Then open: http://localhost:3100

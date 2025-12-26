@@ -1,0 +1,16 @@
+{
+    "name": "testing-dashboard",
+    "version": "1.0.0",
+    "description": "Real-time monitoring dashboard for distributed system testing",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "nodemon index.js"
+    },
+    "dependencies": {
+        "express": "^4.18.2",
+        "ws": "^8.13.0",
+        "@kubernetes/client-node": "^0.20.0",
+        "axios": "^1.4.0"
+    }
+}
