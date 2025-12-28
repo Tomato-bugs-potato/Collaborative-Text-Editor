@@ -52,20 +52,20 @@ async function discoverMaster() {
     let testClient = null;
     try {
       const urlParts = masterUrl.match(/postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/);
-      if (!urlParts) return { host, healthy: false, error: 'Invalid URL' };
+      if (!urlParts) throw new Error('Invalid DATABASE_URL format');
 
-      const [_, user, pass, oldHost, port, db] = urlParts;
-      const testUrl = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
+      const [_, user, password, oldHost, port, dbName] = urlParts;
+      const testUrl = `postgresql://${user}:${password}@${host}:${port}/${dbName}`;
 
       testClient = new PrismaClient({
         datasources: { db: { url: testUrl } },
-        log: []
+        log: ['error']
       });
 
+      // Check if node is writable
       const result = await testClient.$queryRaw`SELECT pg_is_in_recovery()`;
       const isReadOnly = result[0].pg_is_in_recovery;
 
-      console.log(`[Prisma] Host ${host}: healthy=true, isReadOnly=${isReadOnly}`);
       return { host, healthy: true, isReadOnly, client: testClient, url: testUrl };
     } catch (err) {
       if (testClient) await testClient.$disconnect().catch(() => { });
