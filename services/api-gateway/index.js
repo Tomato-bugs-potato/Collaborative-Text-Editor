@@ -9,8 +9,49 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const INSTANCE_ID = process.env.INSTANCE_ID || 'gateway-1';
 
+// Trust proxy for running behind nginx/k8s load balancer
+app.set('trust proxy', 1);
+
+// Setup Prometheus metrics
 // Setup Prometheus metrics
 setupMetrics(app, 'api-gateway', INSTANCE_ID);
+
+// Rate Limiting
+const rateLimit = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
+const Redis = require('ioredis');
+
+const redisClient = new Redis.Cluster((process.env.REDIS_NODES || 'redis-node-1:7001,redis-node-2:7002,redis-node-3:7003').split(',').map(node => {
+  const [host, port] = node.split(':');
+  return { host, port: parseInt(port) || 6379 };
+}), {
+  redisOptions: { password: process.env.REDIS_PASSWORD },
+  scaleReads: 'slave'
+});
+
+const authLimiter = rateLimit({
+  store: new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+  }),
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too Many Requests', message: 'You have exceeded the 100 requests in 1 minute limit!' },
+  validate: { xForwardedForHeader: false }
+});
+
+const docLimiter = rateLimit({
+  store: new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+  }),
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 1000, // Limit each IP to 1000 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too Many Requests', message: 'You have exceeded the 1000 requests in 1 minute limit!' },
+  validate: { xForwardedForHeader: false }
+});
 
 // Parse service URLs with fallback defaults
 const authServices = (process.env.AUTH_SERVICE_URL || 'http://auth-service-1:3001').split(',').map(u => u.trim());
@@ -88,12 +129,28 @@ app.use('/api/documents', authenticateRequest, createProxyMiddleware({
   }
 }));
 
+// Collaboration Service REST API proxy (requires authentication)
+app.use('/api/collaboration', authenticateRequest, createProxyMiddleware({
+  target: collaborationServices[0], // Default target
+  router: () => {
+    const target = collaborationServices[collaborationIndex % collaborationServices.length];
+    collaborationIndex++;
+    console.log(`[API Gateway] Routing to collaboration service REST API: ${target}`);
+    return url.parse(target);
+  },
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/collaboration': ''
+  }
+}));
+
 // WebSocket proxy for Collaboration Service
 app.use('/socket.io', createProxyMiddleware({
   target: collaborationServices[0], // Default target
   router: (req) => {
     // Sticky session based on client IP
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress || '';
 
     // Simple hash function for the IP
     let hash = 0;
