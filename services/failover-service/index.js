@@ -243,35 +243,48 @@ async function monitor() {
     if (!masterNode && healthyReplicas.length > 0) {
         const masterFailureCount = failureCounts['postgres-master'] || 0;
         if (masterFailureCount >= FAIL_THRESHOLD) {
-            console.log('[Failover] Master is confirmed DOWN. Initiating failover...');
-            const target = healthyReplicas[0];
-            try {
-                await promoteReplica(target.name);
-                console.log(`[Failover] Successfully promoted ${target.name} to new Master!`);
+            if (masterFailureCount >= FAIL_THRESHOLD) {
+                console.log('[Failover] Master is confirmed DOWN. Initiating failover...');
 
-                // AUTOMATIC SERVICE RESTART
-                console.log('[Failover] Waiting for new master to stabilize...');
-
-                // Run migrations against the new master to ensure schema exists
-                await runMigrations(target.name);
-
-                // Restart dependent services AND remaining replicas (to prevent stale reads)
-                const remainingReplicas = healthyReplicas.filter(r => r.name !== target.name).map(r => r.name);
-                if (remainingReplicas.length > 0) {
-                    console.log(`[Failover] Restarting remaining replicas to force re-sync: ${remainingReplicas.join(', ')}`);
-                    await Promise.all(remainingReplicas.map(name => restartContainer(name)));
+                // FENCING: Attempt to stop the old master container to prevent split-brain
+                try {
+                    console.log('[Failover] FENCING: Attempting to stop old master container...');
+                    const oldMaster = docker.getContainer('postgres-master');
+                    await oldMaster.stop({ t: 5 }); // Force stop after 5 seconds
+                    console.log('[Failover] FENCING: Old master stopped successfully.');
+                } catch (fenceErr) {
+                    console.warn(`[Failover] FENCING WARNING: Failed to stop old master: ${fenceErr.message}. It might already be down.`);
                 }
 
-                await restartDependentServices();
-                console.log('[Failover] Failover complete! All services should now use the new master.');
+                const target = healthyReplicas[0];
+                try {
+                    await promoteReplica(target.name);
+                    console.log(`[Failover] Successfully promoted ${target.name} to new Master!`);
 
-                failureCounts = {};
-            } catch (err) {
-                console.error('[Failover] Failover failed:', err.message);
+                    // AUTOMATIC SERVICE RESTART
+                    console.log('[Failover] Waiting for new master to stabilize...');
+
+                    // Run migrations against the new master to ensure schema exists
+                    await runMigrations(target.name);
+
+                    // Restart dependent services AND remaining replicas (to prevent stale reads)
+                    const remainingReplicas = healthyReplicas.filter(r => r.name !== target.name).map(r => r.name);
+                    if (remainingReplicas.length > 0) {
+                        console.log(`[Failover] Restarting remaining replicas to force re-sync: ${remainingReplicas.join(', ')}`);
+                        await Promise.all(remainingReplicas.map(name => restartContainer(name)));
+                    }
+
+                    await restartDependentServices();
+                    console.log('[Failover] Failover complete! All services should now use the new master.');
+
+                    failureCounts = {};
+                } catch (err) {
+                    console.error('[Failover] Failover failed:', err.message);
+                }
             }
+        } else if (!masterNode && healthyReplicas.length === 0) {
+            console.warn('[Failover] WARNING: No master AND no healthy replicas found! Cluster is in critical state.');
         }
-    } else if (!masterNode && healthyReplicas.length === 0) {
-        console.warn('[Failover] WARNING: No master AND no healthy replicas found! Cluster is in critical state.');
     }
 }
 
