@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { Upload } = require('@aws-sdk/lib-storage');
 const fs = require('fs');
@@ -222,6 +222,116 @@ app.get('/snapshots/:filename', async (req, res) => {
         const filePath = path.join(__dirname, 'uploads', filename);
         if (fs.existsSync(filePath)) {
             res.sendFile(filePath);
+        } else {
+            res.status(404).json({ error: 'File not found' });
+        }
+    }
+});
+
+// List Snapshots for a Document
+app.get('/documents/:documentId/snapshots', async (req, res) => {
+    const { documentId } = req.params;
+
+    if (STORAGE_TYPE === 's3' || STORAGE_TYPE === 'minio') {
+        const params = {
+            Bucket: BUCKET_NAME,
+            Prefix: `snapshots/${documentId}/`
+        };
+
+        try {
+            const command = new ListObjectsV2Command(params);
+            const data = await s3.send(command);
+
+            const snapshots = (data.Contents || []).map(item => {
+                // Key format: snapshots/{documentId}/{version}-{timestamp}.json
+                const filename = item.Key.split('/').pop();
+                const [version, timestampExt] = filename.split('-');
+                const timestamp = timestampExt.replace('.json', '');
+
+                return {
+                    key: item.Key,
+                    version: parseInt(version),
+                    timestamp: parseInt(timestamp),
+                    size: item.Size,
+                    lastModified: item.LastModified
+                };
+            }).sort((a, b) => b.version - a.version); // Newest first
+
+            res.json({ snapshots });
+        } catch (err) {
+            console.error('S3 List Error:', err);
+            res.status(500).json({ error: 'Failed to list snapshots' });
+        }
+    } else {
+        // Local storage listing
+        const dir = path.join(__dirname, 'uploads', 'snapshots', documentId);
+        if (fs.existsSync(dir)) {
+            const files = fs.readdirSync(dir);
+            const snapshots = files.map(file => {
+                const [version, timestampExt] = file.split('-');
+                const timestamp = timestampExt.replace('.json', '');
+                const stats = fs.statSync(path.join(dir, file));
+
+                return {
+                    key: file, // Just filename for local
+                    version: parseInt(version),
+                    timestamp: parseInt(timestamp),
+                    size: stats.size,
+                    lastModified: stats.mtime
+                };
+            }).sort((a, b) => b.version - a.version);
+
+            res.json({ snapshots });
+        } else {
+            res.json({ snapshots: [] });
+        }
+    }
+});
+
+// Internal Get Snapshot (Returns JSON content directly)
+app.get('/internal/snapshots/:key(*)', async (req, res) => {
+    const { key } = req.params;
+
+    if (STORAGE_TYPE === 's3' || STORAGE_TYPE === 'minio') {
+        const params = {
+            Bucket: BUCKET_NAME,
+            Key: key
+        };
+
+        try {
+            const command = new GetObjectCommand(params);
+            const response = await s3.send(command);
+            // Stream to string
+            const streamToString = (stream) => new Promise((resolve, reject) => {
+                const chunks = [];
+                stream.on("data", (chunk) => chunks.push(chunk));
+                stream.on("error", reject);
+                stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+            });
+
+            const bodyContents = await streamToString(response.Body);
+            res.json(JSON.parse(bodyContents));
+        } catch (err) {
+            console.error('S3 Internal Get Error:', err);
+            res.status(404).json({ error: 'Snapshot not found' });
+        }
+    } else {
+        // Local storage
+        // Handle both full key (snapshots/docId/file) and just filename
+        let filePath;
+        if (key.includes('/')) {
+            filePath = path.join(__dirname, 'uploads', key);
+        } else {
+            // Fallback/Assumption: key is just filename, but we need docId. 
+            // This path is tricky for local if we don't know docId. 
+            // But the list endpoint returns just filename for local.
+            // Let's assume the caller passes the full relative path for local too if they got it from list.
+            filePath = path.join(__dirname, 'uploads', key);
+        }
+
+        if (fs.existsSync(filePath)) {
+            const content = fs.readFileSync(filePath, 'utf8');
+            res.json(JSON.parse(content));
         } else {
             res.status(404).json({ error: 'File not found' });
         }
