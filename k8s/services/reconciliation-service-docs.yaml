@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reconciliation-service-docs
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reconciliation-service-docs
+  template:
+    metadata:
+      labels:
+        app: reconciliation-service-docs
+    spec:
+      containers:
+        - name: reconciliation-service
+          image: reconciliation-service:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: common-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: CONSUMER_GROUP
+              value: "reconciliation-group"
+            - name: DATABASE_URL
+              value: "postgresql://editor:$(DB_PASSWORD)@$(DB_HOST):5432/texteditor_docs"

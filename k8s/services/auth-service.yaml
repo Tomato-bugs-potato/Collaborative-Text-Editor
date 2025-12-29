@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      initContainers:
+        # Wait for PostgreSQL master to be ready
+        - name: wait-for-postgres
+          image: postgres:15
+          command: ['sh', '-c', 
+            'until pg_isready -h postgres-master -U editor -d texteditor; do echo "Waiting for postgres..."; sleep 2; done;
+             echo "PostgreSQL is ready!"']
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+        # Run Prisma migrations
+        - name: run-migrations
+          image: auth-service:latest
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'npx prisma db push --skip-generate']
+          envFrom:
+            - configMapRef:
+                name: common-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://editor:$(DB_PASSWORD)@postgres-master:5432/texteditor"
+      containers:
+        - name: auth-service
+          image: auth-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: common-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: PORT
+              value: "3001"
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DATABASE_URL
+              value: "postgresql://editor:$(DB_PASSWORD)@$(DB_HOST):5432/texteditor"
+            - name: GOOGLE_CALLBACK_URL
+              value: "http://localhost/auth/google/callback" # Needs ingress host
+            - name: CLIENT_URL
+              value: "http://localhost" # Needs ingress host
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: default
+spec:
+  ports:
+    - port: 3001
+      targetPort: 3001
+  selector:
+    app: auth-service

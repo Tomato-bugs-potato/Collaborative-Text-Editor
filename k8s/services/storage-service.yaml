@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storage-service
+  template:
+    metadata:
+      labels:
+        app: storage-service
+    spec:
+      containers:
+        - name: storage-service
+          image: storage-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3006
+          envFrom:
+            - configMapRef:
+                name: common-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: PORT
+              value: "3006"
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: STORAGE_TYPE
+              value: "minio"
+            - name: AWS_ENDPOINT
+              value: "http://minio:9000"
+            - name: AWS_BUCKET_NAME
+              value: "editor-storage"
+          readinessProbe:
+            tcpSocket:
+              port: 3006
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-service
+  namespace: default
+spec:
+  ports:
+    - port: 3006
+      targetPort: 3006
+  selector:
+    app: storage-service

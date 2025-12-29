@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: failover-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: failover-service
+  template:
+    metadata:
+      labels:
+        app: failover-service
+    spec:
+      containers:
+        - name: failover-service
+          image: failover-service:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: common-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: REDIS_URL
+              value: "redis://redis-cluster-0.redis-cluster:6379"
+            - name: DB_USER
+              value: "editor"
+            - name: DB_NAME
+              value: "texteditor"
+            # DB_PASSWORD is in secrets
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
