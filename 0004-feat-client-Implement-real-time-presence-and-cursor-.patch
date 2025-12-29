@@ -1,0 +1,634 @@
+From fdd779c9ebae54b9f61a1843be3c1aabf02e49fe Mon Sep 17 00:00:00 2001
+From: Meseretbolled <meseretbolled@gmail.com@gmail.com>
+Date: Thu, 25 Dec 2025 21:57:37 +0300
+Subject: [PATCH 04/20] feat(client): Implement real-time presence and cursor
+ tracking
+
+---
+ client/Dockerfile        |  10 +-
+ client/src/TextEditor.js | 433 ++++++++++++++++++++++++++-------------
+ 2 files changed, 298 insertions(+), 145 deletions(-)
+
+diff --git a/client/Dockerfile b/client/Dockerfile
+index 4f350e1..b30ce64 100644
+--- a/client/Dockerfile
++++ b/client/Dockerfile
+@@ -11,16 +11,16 @@ ARG REACT_APP_EMAILJS_TEMPLATE_ID
+ ARG REACT_APP_EMAILJS_PUBLIC_KEY
+ 
+ # Set environment variables for React build
+-ENV REACT_APP_API_URL=${REACT_APP_API_URL:-http://localhost:3001}
+-ENV REACT_APP_DOCUMENTS_URL=${REACT_APP_DOCUMENTS_URL:-http://localhost:3002}
+-ENV REACT_APP_COLLABORATION_URL=${REACT_APP_COLLABORATION_URL:-http://localhost:4000}
+-ENV REACT_APP_AUTH_URL=http://localhost:3001
++ENV REACT_APP_API_URL=${REACT_APP_API_URL:-http://localhost}
++ENV REACT_APP_DOCUMENTS_URL=${REACT_APP_DOCUMENTS_URL:-http://localhost/api/documents}
++ENV REACT_APP_COLLABORATION_URL=${REACT_APP_COLLABORATION_URL:-http://localhost}
++ENV REACT_APP_AUTH_URL=http://localhost/api/auth
+ ENV REACT_APP_EMAILJS_SERVICE_ID=${REACT_APP_EMAILJS_SERVICE_ID}
+ ENV REACT_APP_EMAILJS_TEMPLATE_ID=${REACT_APP_EMAILJS_TEMPLATE_ID}
+ ENV REACT_APP_EMAILJS_PUBLIC_KEY=${REACT_APP_EMAILJS_PUBLIC_KEY}
+ 
+ COPY package*.json ./
+-RUN npm ci
++RUN npm install
+ 
+ COPY . .
+ 
+diff --git a/client/src/TextEditor.js b/client/src/TextEditor.js
+index 1d1359e..cc6b63e 100644
+--- a/client/src/TextEditor.js
++++ b/client/src/TextEditor.js
+@@ -1,12 +1,25 @@
+ import React from 'react'
+ import "quill/dist/quill.snow.css"
+-import { useCallback, useEffect, useState } from "react"
++import { useCallback, useEffect, useState, useRef } from "react"
+ import Quill from "quill"
+ import { io } from "socket.io-client"
+ import { useParams } from "react-router-dom"
+ 
+ const interval_ms = 2000
+ 
++// Cursor module for Quill
++const Cursor = Quill.import('blots/inline');
++class CursorBlot extends Cursor {
++  static create(value) {
++    const node = super.create();
++    node.setAttribute('data-user-id', value.userId);
++    node.style.backgroundColor = value.color || '#ffeb3b';
++    node.style.position = 'relative';
++    return node;
++  }
++}
++CursorBlot.blotName = 'cursor';
++CursorBlot.tagName = 'span';
+ 
+ export default function TextEditor() {
+   const { id: id_doc } = useParams()
+@@ -15,81 +28,117 @@ export default function TextEditor() {
+   const [version, setVersion] = useState(1)
+   const [activeUsers, setActiveUsers] = useState([])
+   const [currentUser, setCurrentUser] = useState(null)
++  const [remoteCursors, setRemoteCursors] = useState({})
++  const cursorOverlaysRef = useRef({})
+ 
+   console.log(id_doc)
+ 
+-
+-
++  // Socket connection
+   useEffect(() => {
+-    // Get JWT token from localStorage (assuming user is logged in)
+     const token = localStorage.getItem('authToken');
+-
+     if (!token) {
+-      console.error('No authentication token found. Please log in first.');
++      console.error('No auth token found');
+       return;
+     }
+ 
+-    // Connect to collaboration service through API Gateway
+-    const s_socket = io(process.env.REACT_APP_API_URL || 'http://localhost', {
+-      transports: ['websocket'],
+-      auth: {
+-        token: token
+-      }
++    const s = io(process.env.REACT_APP_COLLAB_URL || 'http://localhost', {
++      path: '/socket.io',
++      auth: { token },
++      transports: ['websocket', 'polling']
+     });
+ 
+-    setSocket(s_socket);
++    setSocket(s);
+ 
+     return () => {
+-      s_socket.disconnect();
++      s.disconnect();
+     };
++  }, []);
+ 
+-  }, [])
+-
+-
+-  // Handle incoming changes from other users
++  // Socket event handlers for presence and collaboration
+   useEffect(() => {
+     if (newsocket == null || quill == null) return;
+ 
+-    const handleReceiveChanges = (data) => {
+-      quill.updateContents(data.operation);
++    const joinRoom = () => {
++      console.log('Connected to collaboration service, joining document:', id_doc);
++      newsocket.emit('join-document', id_doc);
+     };
+ 
+-    newsocket.on("receive-changes", handleReceiveChanges);
++    // Handle successful document join
++    const handleDocumentJoined = (data) => {
++      console.log('Document joined, active sessions:', data.sessions);
++      setActiveUsers(data.sessions || []);
+ 
+-    return () => {
+-      newsocket.off("receive-changes", handleReceiveChanges);
++      // Find current user from sessions
++      const token = localStorage.getItem('authToken');
++      if (token) {
++        try {
++          const payload = JSON.parse(atob(token.split('.')[1]));
++          const me = data.sessions?.find(u => u.userId === payload.userId?.toString());
++          setCurrentUser(me || { userId: payload.userId });
++        } catch (e) {
++          console.error('Error parsing token:', e);
++        }
++      }
+     };
+-  }, [newsocket, quill]);
+-
+-  // Send local changes to other users
+-  useEffect(() => {
+-    if (newsocket == null || quill == null) return;
+ 
+-    const handleTextChange = (delta, oldDelta, source) => {
+-      if (source !== "user") return;
++    // Handle user joined
++    const handleUserJoined = (data) => {
++      console.log('User joined:', data);
++      setActiveUsers(prev => {
++        const exists = prev.find(u => String(u.userId) === String(data.userId));
++        if (exists) return prev;
++        return [...prev, { userId: String(data.userId), name: data.name, color: data.color || getColorForUser(data.userId) }];
++      });
++    };
+ 
+-      newsocket.emit("send-changes", {
+-        documentId: id_doc,
+-        operation: delta,
+-        version: version
++    // Handle user left
++    const handleUserLeft = (data) => {
++      console.log('User left:', data);
++      setActiveUsers(prev => prev.filter(u => u.userId !== data.userId));
++      // Remove their cursor
++      setRemoteCursors(prev => {
++        const newCursors = { ...prev };
++        delete newCursors[data.userId];
++        return newCursors;
+       });
++      // Remove cursor overlay
++      if (cursorOverlaysRef.current[data.userId]) {
++        cursorOverlaysRef.current[data.userId].remove();
++        delete cursorOverlaysRef.current[data.userId];
++      }
++    };
+ 
+-      setVersion(prev => prev + 1);
++    // Handle cursor updates from other users
++    const handleCursorUpdate = (data) => {
++      console.log('Cursor update from user:', data.userId, 'position:', data.position);
++      setRemoteCursors(prev => ({
++        ...prev,
++        [data.userId]: {
++          position: data.position,
++          selection: data.selection,
++          color: data.color || getColorForUser(data.userId)
++        }
++      }));
+     };
+ 
+-    quill.on("text-change", handleTextChange);
++    // Handle receiving changes from other users
++    const handleReceiveChanges = (data) => {
++      console.log('Received changes from user:', data.userId);
++      quill.updateContents(data.operation);
++      setVersion(data.version);
++    };
+ 
+-    return () => {
+-      quill.off("text-change", handleTextChange);
++    // Handle connection errors
++    const handleConnectError = (error) => {
++      console.error('Socket connection error:', error);
+     };
+-  }, [newsocket, quill, id_doc]);
+ 
+-  // Load document content and join collaboration
+-  useEffect(() => {
+-    if (quill == null) return;
++    const handleError = (error) => {
++      console.error('Socket error:', error);
++    };
+ 
+-    // First, load document content from document service
+-    const loadDocumentContent = async () => {
++    // Load document content
++    const loadDocument = async () => {
+       try {
+         const token = localStorage.getItem('authToken');
+         const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
+@@ -99,108 +148,127 @@ export default function TextEditor() {
+         });
+ 
+         if (response.ok) {
+-          const data = await response.json();
+-          if (data.success && data.data && data.data.data && Object.keys(data.data.data).length > 0) {
+-            console.log("Loading document content from document service:", data.data.data);
+-            quill.setContents(data.data.data);
+-            quill.enable();
++          const result = await response.json();
++          // API returns { success, data: document, message } where document has { id, title, data, ... }
++          const documentContent = result.data?.data;
++          console.log('Loading document content from document service:', documentContent);
++          if (documentContent) {
++            quill.setContents(documentContent);
+           } else {
+-            console.log("No content found, starting with empty document");
+-            quill.setText("");
+-            quill.enable();
++            quill.setText('');
+           }
++          quill.enable();
+         } else {
+-          console.error("Failed to load document content");
+-          quill.setText("");
++          console.error('Failed to load document:', response.status);
++          quill.setText('');
+           quill.enable();
+         }
+       } catch (error) {
+-        console.error("Error loading document content:", error);
+-        quill.setText("");
++        console.error('Error loading document:', error);
+         quill.enable();
+       }
+     };
+ 
+-    loadDocumentContent();
+-
+-    // Then join collaboration session
+-    if (newsocket != null) {
+-      const joinRoom = () => {
+-        console.log("Emitting join-document for:", id_doc);
+-        newsocket.emit("join-document", id_doc);
+-      };
+-
+-      // Join immediately
++    // Register event handlers
++    newsocket.on('connect', joinRoom);
++    newsocket.on('connect_error', handleConnectError);
++    newsocket.on('error', handleError);
++    newsocket.on('document-joined', handleDocumentJoined);
++    newsocket.on('user-joined', handleUserJoined);
++    newsocket.on('user-left', handleUserLeft);
++    newsocket.on('cursor-update', handleCursorUpdate);
++    newsocket.on('receive-changes', handleReceiveChanges);
++
++    // If already connected, join room
++    if (newsocket.connected) {
+       joinRoom();
++    }
+ 
+-      // Also join on reconnection
+-      newsocket.on("connect", joinRoom);
++    // Load document content
++    loadDocument();
+ 
+-      // Handle connection errors
+-      newsocket.on("connect_error", (err) => {
+-        console.error("Socket connection error:", err);
+-      });
++    return () => {
++      newsocket.off('connect', joinRoom);
++      newsocket.off('connect_error', handleConnectError);
++      newsocket.off('error', handleError);
++      newsocket.off('document-joined', handleDocumentJoined);
++      newsocket.off('user-joined', handleUserJoined);
++      newsocket.off('user-left', handleUserLeft);
++      newsocket.off('cursor-update', handleCursorUpdate);
++      newsocket.off('receive-changes', handleReceiveChanges);
++    };
++  }, [newsocket, quill, id_doc]);
+ 
+-      newsocket.on("error", (err) => {
+-        console.error("Socket error:", err);
+-      });
++  // Render remote cursors
++  useEffect(() => {
++    if (!quill) return;
+ 
+-      // Handle successful document join
+-      newsocket.on("document-joined", (data) => {
+-        console.log("Joined document collaboration:", data);
+-        setActiveUsers(data.sessions || []);
+-        // Find current user in sessions
+-        const me = (data.sessions || []).find(u => u.userId === newsocket.userId);
+-        if (me) setCurrentUser(me);
+-      });
++    const editorContainer = quill.root;
+ 
+-      // Handle other users joining
+-      newsocket.on("user-joined", (data) => {
+-        console.log("User joined:", data);
+-        // Refresh sessions from server
+-        fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/collaboration/documents/${id_doc}/sessions`)
+-          .then(res => res.json())
+-          .then(data => {
+-            if (data.sessions) setActiveUsers(data.sessions);
+-          })
+-          .catch(err => console.error("Error fetching sessions:", err));
+-      });
++    Object.entries(remoteCursors).forEach(([userId, cursorData]) => {
++      if (userId === currentUser?.userId?.toString()) return; // Don't show own cursor
+ 
+-      // Handle cursor updates from others
+-      newsocket.on("cursor-update", (data) => {
+-        const { userId, position, selection } = data;
+-        setActiveUsers(prev => prev.map(user =>
+-          user.userId === userId ? { ...user, cursor: position, selection, lastSeen: Date.now() } : user
+-        ));
+-      });
++      let cursorEl = cursorOverlaysRef.current[userId];
++
++      if (!cursorEl) {
++        // Create cursor element
++        cursorEl = document.createElement('div');
++        cursorEl.className = 'remote-cursor';
++        cursorEl.innerHTML = `
++          <div class="cursor-caret" style="background-color: ${cursorData.color}"></div>
++          <div class="cursor-label" style="background-color: ${cursorData.color}">${userId}</div>
++        `;
++        editorContainer.parentNode.appendChild(cursorEl);
++        cursorOverlaysRef.current[userId] = cursorEl;
++      }
+ 
+-      // Handle document loading from collaboration service (if available)
+-      newsocket.on("load-document", (content) => {
+-        console.log("Received content from collaboration service:", content);
+-        if (content && content.ops && content.ops.length > 0) {
+-          quill.setContents(content);
++      // Position cursor
++      try {
++        const bounds = quill.getBounds(cursorData.position);
++        if (bounds) {
++          cursorEl.style.position = 'absolute';
++          cursorEl.style.left = `${bounds.left}px`;
++          cursorEl.style.top = `${bounds.top}px`;
++          cursorEl.style.height = `${bounds.height}px`;
++          cursorEl.style.display = 'block';
+         }
+-      });
++      } catch (e) {
++        console.error('Error positioning cursor:', e);
++      }
++    });
++
++    // Clean up cursors for users who left
++    Object.keys(cursorOverlaysRef.current).forEach(userId => {
++      if (!remoteCursors[userId]) {
++        cursorOverlaysRef.current[userId].remove();
++        delete cursorOverlaysRef.current[userId];
++      }
++    });
++  }, [remoteCursors, quill, currentUser]);
+ 
+-      // Handle user leaving
+-      newsocket.on("user-left", (data) => {
+-        console.log("User left:", data);
+-        setActiveUsers(prev => prev.filter(user => user.userId !== data.userId));
++  // Handle local text changes
++  useEffect(() => {
++    if (newsocket == null || quill == null) return;
++
++    const handleTextChange = (delta, oldDelta, source) => {
++      if (source !== 'user') return;
++
++      const newVersion = version + 1;
++      setVersion(newVersion);
++
++      newsocket.emit('send-changes', {
++        documentId: id_doc,
++        operation: delta,
++        version: newVersion
+       });
++    };
+ 
+-      return () => {
+-        newsocket.off("connect", joinRoom);
+-        newsocket.off("connect_error");
+-        newsocket.off("error");
+-        newsocket.off("document-joined");
+-        newsocket.off("user-joined");
+-        newsocket.off("user-left");
+-        newsocket.off("cursor-update");
+-        newsocket.off("load-document");
+-      };
+-    }
++    quill.on('text-change', handleTextChange);
+ 
+-  }, [newsocket, quill, id_doc]);
++    return () => {
++      quill.off('text-change', handleTextChange);
++    };
++  }, [newsocket, quill, id_doc, version]);
+ 
+   // Periodic document saving
+   useEffect(() => {
+@@ -210,7 +278,7 @@ export default function TextEditor() {
+       const content = quill.getContents();
+       const text = quill.getText();
+ 
+-      if (text.trim()) { // Only save if there's actual content
++      if (text.trim()) {
+         try {
+           const token = localStorage.getItem('authToken');
+           const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
+@@ -221,7 +289,7 @@ export default function TextEditor() {
+             },
+             body: JSON.stringify({
+               data: content,
+-              title: text.split('\n')[0].substring(0, 100) || 'Untitled Document' // Use first line as title
++              title: text.split('\n')[0].substring(0, 100) || 'Untitled Document'
+             })
+           });
+ 
+@@ -234,7 +302,7 @@ export default function TextEditor() {
+           console.error('Error saving document:', error);
+         }
+       }
+-    }, 3000); // Save every 3 seconds
++    }, 3000);
+ 
+     return () => clearInterval(saveInterval);
+   }, [quill, id_doc]);
+@@ -260,7 +328,7 @@ export default function TextEditor() {
+               data: content,
+               title: text.split('\n')[0].substring(0, 100) || 'Untitled Document'
+             }),
+-            keepalive: true // Ensure request completes even if page is unloading
++            keepalive: true
+           });
+         } catch (error) {
+           console.error('Error saving document on unload:', error);
+@@ -272,13 +340,13 @@ export default function TextEditor() {
+     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+   }, [quill, id_doc]);
+ 
+-  // Handle cursor movements (optional)
++  // Handle cursor movements
+   useEffect(() => {
+     if (newsocket == null || quill == null) return;
+ 
+     const handleSelectionChange = (range, oldRange, source) => {
+       if (source === 'user' && range) {
+-        newsocket.emit("cursor-move", {
++        newsocket.emit('cursor-move', {
+           documentId: id_doc,
+           position: range.index,
+           selection: range.length > 0 ? { start: range.index, end: range.index + range.length } : null
+@@ -286,10 +354,10 @@ export default function TextEditor() {
+       }
+     };
+ 
+-    quill.on("selection-change", handleSelectionChange);
++    quill.on('selection-change', handleSelectionChange);
+ 
+     return () => {
+-      quill.off("selection-change", handleSelectionChange);
++      quill.off('selection-change', handleSelectionChange);
+     };
+   }, [newsocket, quill, id_doc]);
+ 
+@@ -302,7 +370,6 @@ export default function TextEditor() {
+     q_quill.disable()
+     q_quill.setText("Loading............")
+     setQuill(q_quill)
+-
+   }, [])
+ 
+   return (
+@@ -312,27 +379,113 @@ export default function TextEditor() {
+           {activeUsers.map(user => (
+             <div
+               key={user.userId}
+-              className={`user-badge ${user.userId === currentUser?.userId ? 'me' : ''}`}
+-              title={user.name || user.userId}
+-              style={{ backgroundColor: user.color || '#ccc' }}
++              className={`user-badge ${user.userId === currentUser?.userId?.toString() ? 'me' : ''}`}
++              title={user.name || `User ${user.userId}`}
++              style={{ backgroundColor: user.color || getColorForUser(user.userId) }}
+             >
+-              {(user.name || user.userId.toString()).substring(0, 1).toUpperCase()}
+-              {user.userId === currentUser?.userId && <span className="me-label">(You)</span>}
++              {(user.name || user.userId?.toString() || '?').substring(0, 1).toUpperCase()}
++              {user.userId === currentUser?.userId?.toString() && <span className="me-label">(You)</span>}
+             </div>
+           ))}
+         </div>
++        <div className="user-count">
++          {activeUsers.length} user{activeUsers.length !== 1 ? 's' : ''} online
++        </div>
+       </div>
+       <div className="container" ref={wrapperReference}></div>
++      <style>{`
++        .editor-container {
++          height: 100vh;
++          display: flex;
++          flex-direction: column;
++        }
++        .presence-bar {
++          display: flex;
++          justify-content: space-between;
++          align-items: center;
++          padding: 8px 16px;
++          background: #f5f5f5;
++          border-bottom: 1px solid #ddd;
++        }
++        .active-users {
++          display: flex;
++          gap: 8px;
++        }
++        .user-badge {
++          width: 32px;
++          height: 32px;
++          border-radius: 50%;
++          display: flex;
++          align-items: center;
++          justify-content: center;
++          color: white;
++          font-weight: bold;
++          font-size: 14px;
++          position: relative;
++          cursor: pointer;
++        }
++        .user-badge.me {
++          border: 2px solid #333;
++        }
++        .me-label {
++          position: absolute;
++          bottom: -16px;
++          font-size: 10px;
++          color: #333;
++          white-space: nowrap;
++        }
++        .user-count {
++          font-size: 12px;
++          color: #666;
++        }
++        .remote-cursor {
++          position: absolute;
++          pointer-events: none;
++          z-index: 1000;
++        }
++        .cursor-caret {
++          width: 2px;
++          height: 100%;
++          animation: blink 1s infinite;
++        }
++        .cursor-label {
++          position: absolute;
++          top: -18px;
++          left: 0;
++          padding: 2px 6px;
++          border-radius: 3px;
++          color: white;
++          font-size: 11px;
++          white-space: nowrap;
++        }
++        @keyframes blink {
++          0%, 50% { opacity: 1; }
++          51%, 100% { opacity: 0; }
++        }
++        .container {
++          flex: 1;
++          overflow: auto;
++        }
++      `}</style>
+     </div>
+   )
+-
+-
+ }
+ 
++// Generate consistent color for user
++function getColorForUser(userId) {
++  const colors = [
++    '#e91e63', '#9c27b0', '#673ab7', '#3f51b5',
++    '#2196f3', '#03a9f4', '#00bcd4', '#009688',
++    '#4caf50', '#8bc34a', '#cddc39', '#ffc107',
++    '#ff9800', '#ff5722', '#795548', '#607d8b'
++  ];
++  const hash = String(userId).split('').reduce((a, b) => a + b.charCodeAt(0), 0);
++  return colors[hash % colors.length];
++}
+ 
+ const ToolBarArea = [
+   [{ header: [1, 2, 3, 4, 5, 6, false] }],
+-  [{ font: [] }], //Default font used in quill
++  [{ font: [] }],
+   [{ list: "ordered" }, { list: "bullet" }],
+   ["bold", "italic", "underline"],
+   [{ color: ['#ffffff', 'orange'] }, { background: ['#ffffff'] }],
+-- 
+2.44.0.windows.1
+
