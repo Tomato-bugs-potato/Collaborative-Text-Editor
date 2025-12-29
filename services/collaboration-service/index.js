@@ -12,7 +12,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { Kafka } = require('kafkajs');
-const { createCluster } = require('redis');
+const Redis = require('ioredis');
 const { createAdapter } = require("@socket.io/redis-adapter");
 const { connect: dbConnect, prisma, prismaRead } = require('./db');
 
@@ -27,27 +27,38 @@ const app = express();
 app.use(express.json());
 
 console.log(`[${INSTANCE_ID}] Starting Collaboration Service`);
+console.log(`[${INSTANCE_ID}] Redis nodes: ${REDIS_NODES.join(', ')}`);
 
-// Create Redis Cluster clients for pub/sub
-function createRedisCluster(name) {
-  const rootNodes = REDIS_NODES.map(node => {
+// Create Redis Cluster clients for pub/sub using ioredis
+function createRedisClusterClient(name) {
+  const clusterNodes = REDIS_NODES.map(node => {
     const [host, port] = node.split(':');
-    return { socket: { host, port: parseInt(port) || 6379 } };
+    return { host, port: parseInt(port) || 6379 };
   });
 
-  const client = createCluster({
-    rootNodes: rootNodes,
-    useReplicas: true
+  const client = new Redis.Cluster(clusterNodes, {
+    redisOptions: {
+      password: undefined, // Set if Redis requires auth
+    },
+    scaleReads: 'slave',
+    enableReadyCheck: true,
+    maxRedirections: 16,
+    retryDelayOnFailover: 100,
+    retryDelayOnClusterDown: 100,
+    clusterRetryStrategy: (times) => Math.min(times * 100, 3000)
   });
 
-  client.on('error', (err) => console.error(`[${INSTANCE_ID}] Redis Cluster ${name} error:`, err));
-  client.on('ready', () => console.log(`[${INSTANCE_ID}] Redis Cluster ${name} connected`));
+  client.on('error', (err) => console.error(`[${INSTANCE_ID}] Redis Cluster ${name} error:`, err.message));
+  client.on('ready', () => console.log(`[${INSTANCE_ID}] Redis Cluster ${name} ready`));
+  client.on('connect', () => console.log(`[${INSTANCE_ID}] Redis Cluster ${name} connected`));
+  client.on('+node', (node) => console.log(`[${INSTANCE_ID}] Redis node added:`, node.options?.host));
+  client.on('-node', (node) => console.log(`[${INSTANCE_ID}] Redis node removed:`, node.options?.host));
 
   return client;
 }
 
-const pubClient = createRedisCluster('publisher');
-const subClient = createRedisCluster('subscriber');
+const pubClient = createRedisClusterClient('publisher');
+const subClient = createRedisClusterClient('subscriber');
 
 // Kafka Configuration
 const kafka = new Kafka({
@@ -136,13 +147,20 @@ async function flushOTs() {
 
 setInterval(flushOTs, FLUSH_INTERVAL);
 
+// Track Redis connection status
+let isRedisReady = false;
+
 // Health endpoints
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', service: 'collaboration-service', instance: INSTANCE_ID });
 });
 
 app.get('/ready', (req, res) => {
-  res.json({ ready: true });
+  if (isRedisReady) {
+    res.json({ ready: true, redis: 'connected' });
+  } else {
+    res.status(503).json({ ready: false, redis: 'disconnected' });
+  }
 });
 
 // Socket.IO setup
@@ -153,13 +171,64 @@ const io = new Server({
   }
 });
 
-// Connect Redis adapter
-Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
-  io.adapter(createAdapter(pubClient, subClient));
-  console.log(`[${INSTANCE_ID}] Redis Cluster adapter connected`);
-}).catch(err => {
-  console.error(`[${INSTANCE_ID}] Redis Cluster adapter connection error:`, err);
-});
+// Connect Redis adapter with retry logic
+async function connectRedisAdapter() {
+  const maxRetries = 10;
+  let retries = 0;
+
+  // Helper to wait for ioredis cluster to be ready
+  const waitForReady = (client, name) => {
+    return new Promise((resolve, reject) => {
+      if (client.status === 'ready') {
+        resolve();
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        reject(new Error(`${name} connection timeout`));
+      }, 5000);
+
+      client.once('ready', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+
+      client.once('error', (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  };
+
+  while (retries < maxRetries && !isRedisReady) {
+    try {
+      console.log(`[${INSTANCE_ID}] Attempting to connect Redis Cluster adapter (attempt ${retries + 1}/${maxRetries})...`);
+
+      // Wait for both clients to be ready (ioredis auto-connects)
+      await Promise.all([
+        waitForReady(pubClient, 'pubClient'),
+        waitForReady(subClient, 'subClient')
+      ]);
+
+      io.adapter(createAdapter(pubClient, subClient));
+      isRedisReady = true;
+      console.log(`[${INSTANCE_ID}] ✓ Redis Cluster adapter connected successfully!`);
+      return true;
+    } catch (err) {
+      retries++;
+      console.error(`[${INSTANCE_ID}] Redis Cluster adapter connection failed (attempt ${retries}/${maxRetries}):`, err.message);
+      if (retries < maxRetries) {
+        console.log(`[${INSTANCE_ID}] Retrying in 3 seconds...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+  }
+
+  if (!isRedisReady) {
+    console.error(`[${INSTANCE_ID}] ✗ Failed to connect Redis adapter after ${maxRetries} attempts. Real-time sync will NOT work across instances!`);
+  }
+  return isRedisReady;
+}
 
 // JWT authentication middleware for Socket.IO
 io.use(async (socket, next) => {
@@ -342,17 +411,31 @@ app.get('/documents/:documentId/transforms', async (req, res) => {
   }
 });
 
-// Start server
-const server = app.listen(PORT, async () => {
-  try {
-    console.log(`[${INSTANCE_ID}] Collaboration service running on port ${PORT}`);
-  } catch (error) {
-    console.error(`[${INSTANCE_ID}] Failed to start service:`, error);
-    process.exit(1);
-  }
-});
+// Start server after Redis is connected
+async function startServer() {
+  // First connect Redis adapter
+  await connectRedisAdapter();
 
-io.attach(server);
+  // Then start the HTTP server
+  const server = app.listen(PORT, () => {
+    console.log(`[${INSTANCE_ID}] Collaboration service running on port ${PORT}`);
+    console.log(`[${INSTANCE_ID}] Redis adapter status: ${isRedisReady ? 'CONNECTED' : 'DISCONNECTED'}`);
+  });
+
+  // Attach Socket.IO to the server
+  io.attach(server);
+
+  return server;
+}
+
+// Initialize
+let server;
+startServer().then(s => {
+  server = s;
+}).catch(err => {
+  console.error(`[${INSTANCE_ID}] Failed to start service:`, err);
+  process.exit(1);
+});
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
