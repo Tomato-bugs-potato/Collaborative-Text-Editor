@@ -186,6 +186,21 @@ For clustered setup:
 postgresql://postgres:mypassword@host1:5432,host2:5432,host3:5432/texteditor?schema=public&targetServerType=primary
 ```
 
+## Developer Tools
+
+To make working with the Kubernetes cluster easier, we recommend using **k9s**. It provides a terminal-based UI to interact with your pods.
+
+**Quick Setup:**
+Run the setup script to download k9s automatically:
+```powershell
+.\scripts\setup-tools.ps1
+```
+
+**Manual Installation:**
+- **Windows**: `winget install k9s` or `choco install k9s`
+- **Mac**: `brew install derailed/k9s/k9s`
+- **Linux**: `snap install k9s`
+
 ## Contributing
 
 Made with the effort of AASTU'S FIFTH year Students.
