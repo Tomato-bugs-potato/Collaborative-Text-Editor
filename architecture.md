@@ -192,11 +192,18 @@ graph TD
 
 The system is designed to be resilient and observable.
 
-### 🐳 Docker Compose Layout
-- **Kafka Cluster**: 3 Brokers (`kafka-1`, `kafka-2`, `kafka-3`) + Zookeeper.
-- **Redis Cluster**: 6 Nodes (3 Master, 3 Replica) for high availability.
-- **PostgreSQL**: Master-Slave setup for data durability.
-- **Nginx**: Layer 7 Load Balancer for both HTTP and WebSocket traffic.
+### ☸️ Kubernetes Cluster Architecture
+- **StatefulSets**:
+    - **Kafka**: Single-node broker (expandable) for event streaming.
+    - **Redis Cluster**: 6-node cluster (3 Master, 3 Replica) for high availability and pub/sub.
+    - **PostgreSQL**: Master-Replica architecture (`postgres-master`, `postgres-replica`) for data durability and read scaling.
+- **Deployments**:
+    - **Microservices**: Stateless deployments for `auth`, `collaboration`, `document`, `presence`, `storage`, and `reconciliation` services.
+    - **API Gateway**: Central entry point for routing requests.
+    - **Client**: React frontend served via Nginx.
+- **Networking**:
+    - **Nginx Load Balancer**: Layer 7 Ingress/LoadBalancer exposing the application to the outside world.
+    - **Headless Services**: For stable network identities of stateful pods.
 
 ### 📊 Monitoring Pipeline
 ```mermaid
