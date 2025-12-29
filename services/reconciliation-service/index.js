@@ -11,7 +11,22 @@ const express = require('express');
 const { Kafka } = require('kafkajs');
 const ot = require('ot-text');
 const { prisma, prismaRead } = require('./shared-utils/prisma-client');
+const { prisma, prismaRead } = require('./shared-utils/prisma-client');
 const { setupMetrics, kafkaMessagesTotal } = require('./shared-utils');
+const Redis = require('ioredis');
+
+// Redis Configuration for Cache Invalidation
+const REDIS_NODES = (process.env.REDIS_NODES || 'redis-node-1:7001,redis-node-2:7002,redis-node-3:7003').split(',');
+const redisClient = new Redis.Cluster(REDIS_NODES.map(node => {
+  const [host, port] = node.split(':');
+  return { host, port: parseInt(port) || 6379 };
+}), {
+  redisOptions: { password: process.env.REDIS_PASSWORD },
+  scaleReads: 'slave'
+});
+
+redisClient.on('error', (err) => console.error(`[${instanceId}] Redis Cluster Error:`, err.message));
+redisClient.on('ready', () => console.log(`[${instanceId}] Redis Cluster Ready for Cache Invalidation`));
 
 const app = express();
 const instanceId = process.env.INSTANCE_ID || `reconcile-${Math.floor(Math.random() * 1000)}`;
@@ -67,37 +82,23 @@ async function flushBuffers() {
 
         // 1. Update PostgreSQL
         await prisma.document.update({
-          where: { id: documentId },
-          data: {
+          value: JSON.stringify({
+            documentId,
             data: buffer.currentContent,
             version: buffer.serverVersion,
-            lastModified: new Date()
-          }
+            timestamp: new Date().toISOString()
+          })
+        }]
         });
+      console.log(`[${instanceId}] Snapshot published to Kafka topic 'document-snapshots' for doc ${documentId}`);
 
-        // 2. Publish snapshot to Kafka for storage/MinIO
-        console.log(`[${instanceId}] Publishing snapshot to Kafka for doc ${documentId}, version ${buffer.serverVersion}`);
-        await producer.send({
-          topic: 'document-snapshots',
-          messages: [{
-            key: documentId,
-            value: JSON.stringify({
-              documentId,
-              data: buffer.currentContent,
-              version: buffer.serverVersion,
-              timestamp: new Date().toISOString()
-            })
-          }]
-        });
-        console.log(`[${instanceId}] Snapshot published to Kafka topic 'document-snapshots' for doc ${documentId}`);
-
-        buffer.isDirty = false;
-        buffer.lastModified = now;
-      } catch (error) {
-        console.error(`[${instanceId}] Error flushing document ${documentId}:`, error);
-      }
+      buffer.isDirty = false;
+      buffer.lastModified = now;
+    } catch (error) {
+      console.error(`[${instanceId}] Error flushing document ${documentId}:`, error);
     }
   }
+}
 }
 
 // Flush every 2 seconds
