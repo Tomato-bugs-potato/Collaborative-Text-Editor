@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require('express');
 const cors = require('cors');
-const { createCluster } = require('redis');
+const Redis = require('ioredis');
 const { setupMetrics } = require('./shared-utils');
 
 const app = express();
@@ -11,15 +11,31 @@ const INSTANCE_ID = process.env.INSTANCE_ID || 'presence-1';
 // Setup Prometheus metrics
 setupMetrics(app, 'presence-service', INSTANCE_ID);
 
-// Redis Client
-const redisClient = createCluster({
-    rootNodes: [
-        { url: process.env.REDIS_URL || 'redis://redis-node-1:7001' }
-    ]
+// Parse Redis cluster nodes from env
+const REDIS_NODES = (process.env.REDIS_NODES || 'redis-cluster-0.redis-cluster:6379').split(',');
+const clusterNodes = REDIS_NODES.map(node => {
+    const [host, port] = node.split(':');
+    return { host, port: parseInt(port) || 6379 };
 });
 
-redisClient.on('error', (err) => console.error('Redis Client Error', err));
-redisClient.on('connect', () => console.log(`[${INSTANCE_ID}] Connected to Redis`));
+console.log(`[${INSTANCE_ID}] Connecting to Redis Cluster:`, clusterNodes.map(n => `${n.host}:${n.port}`).join(', '));
+
+// Redis Cluster Client using ioredis
+const redisClient = new Redis.Cluster(clusterNodes, {
+    redisOptions: {
+        password: undefined, // Set if Redis requires auth
+    },
+    scaleReads: 'slave',
+    enableReadyCheck: true,
+    maxRedirections: 16,
+    retryDelayOnFailover: 100,
+    clusterRetryStrategy: (times) => Math.min(times * 100, 3000)
+});
+
+redisClient.on('error', (err) => console.error(`[${INSTANCE_ID}] Redis Client Error:`, err.message));
+redisClient.on('connect', () => console.log(`[${INSTANCE_ID}] Connecting to Redis...`));
+redisClient.on('ready', () => console.log(`[${INSTANCE_ID}] ✓ Connected to Redis Cluster`));
+
 
 app.use(cors());
 app.use(express.json());
@@ -50,14 +66,12 @@ app.post('/presence/:documentId/:userId', async (req, res) => {
             lastSeen: Date.now()
         });
 
-        // Store in Redis with TTL (e.g., 30 seconds)
-        await redisClient.set(key, data, {
-            EX: 30
-        });
+        // Store in Redis with TTL (e.g., 30 seconds) - ioredis syntax
+        await redisClient.set(key, data, 'EX', 30);
 
-        // Add to sorted set for the document
+        // Add to sorted set for the document - ioredis syntax: zadd(key, score, member)
         const setKey = `doc_users:${documentId}`;
-        await redisClient.zAdd(setKey, { score: Date.now(), value: userId });
+        await redisClient.zadd(setKey, Date.now(), userId);
 
         // Set expiry on the set itself too
         await redisClient.expire(setKey, 300);
@@ -75,12 +89,13 @@ app.get('/presence/:documentId', async (req, res) => {
         const { documentId } = req.params;
         const setKey = `doc_users:${documentId}`;
 
-        // 1. Remove users who haven't updated in 30 seconds
+        // Remove users who haven't updated in 30 seconds
         const thirtySecondsAgo = Date.now() - 30000;
-        await redisClient.zRemRangeByScore(setKey, 0, thirtySecondsAgo);
+        // ioredis syntax: zremrangebyscore(key, min, max)
+        await redisClient.zremrangebyscore(setKey, 0, thirtySecondsAgo);
 
-        // 2. Get remaining active user IDs
-        const activeUserIds = await redisClient.zRange(setKey, 0, -1);
+        // ioredis syntax: zrange(key, start, stop)
+        const activeUserIds = await redisClient.zrange(setKey, 0, -1);
 
         if (activeUserIds.length === 0) {
             return res.json({ users: [] });
@@ -102,11 +117,22 @@ app.get('/presence/:documentId', async (req, res) => {
     }
 });
 
+// Wait for Redis to be ready, then start the server
 const start = async () => {
-    await redisClient.connect();
+    // ioredis auto-connects, just wait for ready
+    if (redisClient.status !== 'ready') {
+        await new Promise((resolve, reject) => {
+            redisClient.once('ready', resolve);
+            redisClient.once('error', reject);
+        });
+    }
+
     app.listen(PORT, () => {
         console.log(`[${INSTANCE_ID}] Presence Service running on port ${PORT}`);
     });
 };
 
-start();
+start().catch(err => {
+    console.error(`[${INSTANCE_ID}] Failed to start:`, err);
+    process.exit(1);
+});

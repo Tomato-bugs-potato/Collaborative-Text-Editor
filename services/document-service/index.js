@@ -554,6 +554,145 @@ app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandl
  *         description: Document not found
  */
 
+// List Snapshots (Proxy to Storage Service)
+/**
+ * @swagger
+ * /documents/{id}/snapshots:
+ *   get:
+ *     summary: List available snapshots/versions for a document
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of snapshots
+ */
+app.get('/documents/:id/snapshots', authenticateToken, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const storageServiceUrl = process.env.STORAGE_SERVICE_URL || 'http://localhost:3006';
+
+  try {
+    const response = await serviceRequest(`${storageServiceUrl}/documents/${id}/snapshots`);
+    res.json(createResponse(true, response.snapshots, 'Snapshots retrieved successfully'));
+  } catch (error) {
+    console.error('Error fetching snapshots:', error);
+    res.status(500).json(createErrorResponse('Failed to fetch snapshots', 500));
+  }
+}));
+
+// Revert Document to Snapshot
+/**
+ * @swagger
+ * /documents/{id}/revert:
+ *   post:
+ *     summary: Revert document to a specific snapshot
+ *     tags: [Documents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - snapshotKey
+ *             properties:
+ *               snapshotKey:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Document reverted successfully
+ */
+app.post('/documents/:id/revert', authenticateToken, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { snapshotKey } = req.body;
+
+  if (!snapshotKey) {
+    return res.status(400).json(createErrorResponse('Snapshot key is required', 400));
+  }
+
+  // Check permissions
+  const existingDocument = await prismaRead.document.findFirst({
+    where: {
+      id,
+      OR: [
+        { ownerId: req.user.userId },
+        {
+          collaborators: {
+            some: {
+              userId: req.user.userId,
+              role: 'editor'
+            }
+          }
+        }
+      ]
+    }
+  });
+
+  if (!existingDocument) {
+    return res.status(404).json(createErrorResponse('Document not found or access denied', 404));
+  }
+
+  // Fetch snapshot content from Storage Service
+  const storageServiceUrl = process.env.STORAGE_SERVICE_URL || 'http://localhost:3006';
+  let snapshotData;
+
+  try {
+    // Use the internal endpoint to get JSON content directly
+    // Encode the key because it contains slashes
+    const encodedKey = encodeURIComponent(snapshotKey);
+    // Note: serviceRequest helper might not support encoded path params well if it expects simple URL.
+    // Let's construct URL carefully.
+    // If snapshotKey is "snapshots/123/v1.json", we want "/internal/snapshots/snapshots%2F123%2Fv1.json"
+    // But express routing with (*) might handle unencoded slashes too depending on client.
+    // Safest is to pass it as is if the service expects path param with wildcards.
+    // However, fetch/axios might normalize.
+    // Let's try sending it as a query param or just raw path.
+    // The storage service defined: app.get('/internal/snapshots/:key(*)'
+
+    snapshotData = await serviceRequest(`${storageServiceUrl}/internal/snapshots/${snapshotKey}`);
+  } catch (error) {
+    console.error('Error fetching snapshot content:', error);
+    return res.status(500).json(createErrorResponse('Failed to retrieve snapshot content', 500));
+  }
+
+  if (!snapshotData || !snapshotData.data) {
+    return res.status(400).json(createErrorResponse('Invalid snapshot data', 400));
+  }
+
+  // Update document with snapshot content
+  const updatedDocument = await prisma.document.update({
+    where: { id },
+    data: {
+      data: snapshotData.data,
+      lastModified: new Date()
+      // We do NOT decrement version. Revert is a forward-moving action.
+      // The reconciliation service will see this update and increment the version.
+    }
+  });
+
+  // Invalidate cache
+  await invalidateCache(id);
+
+  // Publish event
+  await publishDocumentEvent('DOCUMENT_UPDATED', {
+    documentId: id,
+    userId: req.user.userId,
+    updates: { reverted: true, fromVersion: snapshotData.version }
+  });
+
+  res.json(createResponse(true, updatedDocument, 'Document reverted successfully'));
+}));
+
 // Start server
 app.listen(PORT, async () => {
   try {
