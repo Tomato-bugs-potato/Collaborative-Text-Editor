@@ -156,6 +156,30 @@ app.get('/health', (req, res) => {
 });
 
 // Upload Snapshot (Manual/REST)
+/**
+ * @swagger
+ * /snapshots:
+ *   post:
+ *     summary: Upload a snapshot file
+ *     tags: [Storage]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               snapshot:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Snapshot uploaded successfully
+ *       400:
+ *         description: No file uploaded
+ *       500:
+ *         description: Upload failed
+ */
 app.post('/snapshots', upload ? upload.single('snapshot') : (req, res, next) => next(), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
@@ -201,6 +225,25 @@ app.post('/snapshots', upload ? upload.single('snapshot') : (req, res, next) => 
 });
 
 // Get Snapshot
+/**
+ * @swagger
+ * /snapshots/{filename}:
+ *   get:
+ *     summary: Get a snapshot by filename
+ *     tags: [Storage]
+ *     parameters:
+ *       - in: path
+ *         name: filename
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Snapshot filename
+ *     responses:
+ *       302:
+ *         description: Redirect to signed URL or file
+ *       404:
+ *         description: File not found
+ */
 app.get('/snapshots/:filename', async (req, res) => {
     const { filename } = req.params;
 
@@ -229,6 +272,45 @@ app.get('/snapshots/:filename', async (req, res) => {
 });
 
 // List Snapshots for a Document
+/**
+ * @swagger
+ * /documents/{documentId}/snapshots:
+ *   get:
+ *     summary: List all snapshots for a document
+ *     tags: [Storage]
+ *     parameters:
+ *       - in: path
+ *         name: documentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Document ID
+ *     responses:
+ *       200:
+ *         description: List of snapshots
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 snapshots:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       key:
+ *                         type: string
+ *                       version:
+ *                         type: number
+ *                       timestamp:
+ *                         type: number
+ *                       size:
+ *                         type: number
+ *                       lastModified:
+ *                         type: string
+ *       500:
+ *         description: Failed to list snapshots
+ */
 app.get('/documents/:documentId/snapshots', async (req, res) => {
     const { documentId } = req.params;
 
@@ -289,6 +371,27 @@ app.get('/documents/:documentId/snapshots', async (req, res) => {
 });
 
 // Internal Get Snapshot (Returns JSON content directly)
+/**
+ * @swagger
+ * /internal/snapshots/{key}:
+ *   get:
+ *     summary: Internal endpoint to get snapshot content as JSON
+ *     tags: [Storage]
+ *     parameters:
+ *       - in: path
+ *         name: key
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Snapshot key/path
+ *     responses:
+ *       200:
+ *         description: Snapshot content as JSON
+ *       404:
+ *         description: Snapshot not found
+ *       500:
+ *         description: Failed to retrieve snapshot
+ */
 app.get('/internal/snapshots/:key(*)', async (req, res) => {
     const { key } = req.params;
 
