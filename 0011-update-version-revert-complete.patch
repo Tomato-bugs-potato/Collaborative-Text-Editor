@@ -1,0 +1,314 @@
+From 8133f0caf4cd48d83b675d6ab0d1e8976f5502cf Mon Sep 17 00:00:00 2001
+From: github name <github email>
+Date: Thu, 25 Dec 2025 23:47:21 +0300
+Subject: [PATCH 11/20] update: version revert complete
+
+---
+ client/src/TextEditor.js                      | 169 +++++++++++++++++-
+ services/document-service/index.js            |  18 +-
+ .../src/utils/kafka-producer.js               |  29 ++-
+ 3 files changed, 210 insertions(+), 6 deletions(-)
+
+diff --git a/client/src/TextEditor.js b/client/src/TextEditor.js
+index cc6b63e..57f99fd 100644
+--- a/client/src/TextEditor.js
++++ b/client/src/TextEditor.js
+@@ -29,6 +29,8 @@ export default function TextEditor() {
+   const [activeUsers, setActiveUsers] = useState([])
+   const [currentUser, setCurrentUser] = useState(null)
+   const [remoteCursors, setRemoteCursors] = useState({})
++  const [showHistory, setShowHistory] = useState(false)
++  const [snapshots, setSnapshots] = useState([])
+   const cursorOverlaysRef = useRef({})
+ 
+   console.log(id_doc)
+@@ -372,6 +374,66 @@ export default function TextEditor() {
+     setQuill(q_quill)
+   }, [])
+ 
++  // Fetch snapshots
++  const fetchSnapshots = async () => {
++    try {
++      const token = localStorage.getItem('authToken');
++      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}/snapshots`, {
++        headers: {
++          'Authorization': `Bearer ${token}`
++        }
++      });
++      if (response.ok) {
++        const data = await response.json();
++        setSnapshots(data.data || []);
++        setShowHistory(true);
++      } else {
++        console.error('Failed to fetch snapshots');
++      }
++    } catch (error) {
++      console.error('Error fetching snapshots:', error);
++    }
++  };
++
++  // Revert to snapshot
++  const handleRevert = async (snapshotKey) => {
++    if (!window.confirm('Are you sure you want to revert to this version? Current changes will be overwritten.')) return;
++
++    try {
++      const token = localStorage.getItem('authToken');
++      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}/revert`, {
++        method: 'POST',
++        headers: {
++          'Authorization': `Bearer ${token}`,
++          'Content-Type': 'application/json'
++        },
++        body: JSON.stringify({ snapshotKey })
++      });
++
++      if (response.ok) {
++        alert('Document reverted successfully!');
++        setShowHistory(false);
++
++        // Reload document content
++        const docResponse = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost'}/api/documents/${id_doc}`, {
++          headers: { 'Authorization': `Bearer ${token}` }
++        });
++        if (docResponse.ok) {
++          const result = await docResponse.json();
++          const documentContent = result.data?.data;
++          if (documentContent && quill) {
++            quill.setContents(documentContent);
++          }
++        }
++      } else {
++        alert('Failed to revert document');
++      }
++    } catch (error) {
++      console.error('Error reverting document:', error);
++      alert('Error reverting document');
++    }
++  };
++
+   return (
+     <div className="editor-container">
+       <div className="presence-bar">
+@@ -388,10 +450,40 @@ export default function TextEditor() {
+             </div>
+           ))}
+         </div>
+-        <div className="user-count">
+-          {activeUsers.length} user{activeUsers.length !== 1 ? 's' : ''} online
++        <div className="actions">
++          <button className="history-btn" onClick={fetchSnapshots}>
++            🕒 History
++          </button>
++          <div className="user-count">
++            {activeUsers.length} user{activeUsers.length !== 1 ? 's' : ''} online
++          </div>
+         </div>
+       </div>
++
++      {showHistory && (
++        <div className="modal-overlay" onClick={() => setShowHistory(false)}>
++          <div className="modal-content" onClick={e => e.stopPropagation()}>
++            <h3>Version History</h3>
++            <div className="snapshot-list">
++              {snapshots.length === 0 ? (
++                <p>No snapshots available</p>
++              ) : (
++                snapshots.map(snap => (
++                  <div key={snap.key} className="snapshot-item">
++                    <div className="snapshot-info">
++                      <span className="version">v{snap.version}</span>
++                      <span className="date">{new Date(snap.timestamp).toLocaleString()}</span>
++                    </div>
++                    <button onClick={() => handleRevert(snap.key)}>Revert</button>
++                  </div>
++                ))
++              )}
++            </div>
++            <button className="close-btn" onClick={() => setShowHistory(false)}>Close</button>
++          </div>
++        </div>
++      )}
++
+       <div className="container" ref={wrapperReference}></div>
+       <style>{`
+         .editor-container {
+@@ -407,6 +499,22 @@ export default function TextEditor() {
+           background: #f5f5f5;
+           border-bottom: 1px solid #ddd;
+         }
++        .actions {
++          display: flex;
++          align-items: center;
++          gap: 15px;
++        }
++        .history-btn {
++          padding: 5px 10px;
++          background: #fff;
++          border: 1px solid #ccc;
++          border-radius: 4px;
++          cursor: pointer;
++          font-size: 13px;
++        }
++        .history-btn:hover {
++          background: #e0e0e0;
++        }
+         .active-users {
+           display: flex;
+           gap: 8px;
+@@ -466,6 +574,63 @@ export default function TextEditor() {
+           flex: 1;
+           overflow: auto;
+         }
++        
++        /* Modal Styles */
++        .modal-overlay {
++          position: fixed;
++          top: 0;
++          left: 0;
++          right: 0;
++          bottom: 0;
++          background: rgba(0,0,0,0.5);
++          display: flex;
++          justify-content: center;
++          align-items: center;
++          z-index: 2000;
++        }
++        .modal-content {
++          background: white;
++          padding: 20px;
++          border-radius: 8px;
++          width: 400px;
++          max-height: 80vh;
++          overflow-y: auto;
++          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
++        }
++        .snapshot-list {
++          margin: 15px 0;
++          display: flex;
++          flex-direction: column;
++          gap: 10px;
++        }
++        .snapshot-item {
++          display: flex;
++          justify-content: space-between;
++          align-items: center;
++          padding: 10px;
++          border: 1px solid #eee;
++          border-radius: 4px;
++        }
++        .snapshot-info {
++          display: flex;
++          flex-direction: column;
++        }
++        .version {
++          font-weight: bold;
++          font-size: 14px;
++        }
++        .date {
++          font-size: 12px;
++          color: #666;
++        }
++        .close-btn {
++          width: 100%;
++          padding: 8px;
++          background: #f5f5f5;
++          border: 1px solid #ddd;
++          border-radius: 4px;
++          cursor: pointer;
++        }
+       `}</style>
+     </div>
+   )
+diff --git a/services/document-service/index.js b/services/document-service/index.js
+index 8e2ba4c..da85259 100644
+--- a/services/document-service/index.js
++++ b/services/document-service/index.js
+@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
+ const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest, setupMetrics } = require('./shared-utils');
+ const { prisma, prismaRead } = require('./shared-utils/prisma-client');
+ const { validate, createDocumentSchema, updateDocumentSchema, addCollaboratorSchema } = require('./src/utils/validation');
+-const { connectProducer, publishDocumentEvent } = require('./src/utils/kafka-producer');
++const { connectProducer, publishDocumentEvent, publishSnapshot } = require('./src/utils/kafka-producer');
+ const { cache, invalidateCache } = require('./src/middleware/cache');
+ const swaggerUi = require('swagger-ui-express');
+ const swaggerSpecs = require('./src/config/swagger');
+@@ -257,6 +257,16 @@ app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asy
+     updates: { title: !!title, data: !!data }
+   });
+ 
++  // Publish snapshot
++  if (data) {
++    await publishSnapshot({
++      documentId: id,
++      version: updatedDocument.version,
++      data: updatedDocument.data,
++      userId: req.user.userId
++    });
++  }
++
+   res.json(createResponse(true, updatedDocument, 'Document updated successfully'));
+ }));
+ 
+@@ -491,7 +501,8 @@ app.get('/documents/:id/snapshots', authenticateToken, asyncHandler(async (req,
+ 
+   try {
+     const response = await serviceRequest(`${storageServiceUrl}/documents/${id}/snapshots`);
+-    res.json(createResponse(true, response.snapshots, 'Snapshots retrieved successfully'));
++    const data = await response.json();
++    res.json(createResponse(true, data.snapshots, 'Snapshots retrieved successfully'));
+   } catch (error) {
+     console.error('Error fetching snapshots:', error);
+     res.status(500).json(createErrorResponse('Failed to fetch snapshots', 500));
+@@ -573,7 +584,8 @@ app.post('/documents/:id/revert', authenticateToken, asyncHandler(async (req, re
+     // Let's try sending it as a query param or just raw path.
+     // The storage service defined: app.get('/internal/snapshots/:key(*)'
+ 
+-    snapshotData = await serviceRequest(`${storageServiceUrl}/internal/snapshots/${snapshotKey}`);
++    const response = await serviceRequest(`${storageServiceUrl}/internal/snapshots/${snapshotKey}`);
++    snapshotData = await response.json();
+   } catch (error) {
+     console.error('Error fetching snapshot content:', error);
+     return res.status(500).json(createErrorResponse('Failed to retrieve snapshot content', 500));
+diff --git a/services/document-service/src/utils/kafka-producer.js b/services/document-service/src/utils/kafka-producer.js
+index eb60861..9da5a75 100644
+--- a/services/document-service/src/utils/kafka-producer.js
++++ b/services/document-service/src/utils/kafka-producer.js
+@@ -48,7 +48,34 @@ const publishDocumentEvent = async (type, payload) => {
+     }
+ };
+ 
++const publishSnapshot = async (snapshotData) => {
++    if (!isConnected) {
++        console.warn(`[${instanceId}] Kafka producer not connected, skipping snapshot`);
++        return;
++    }
++
++    try {
++        await producer.send({
++            topic: 'document-snapshots',
++            messages: [
++                {
++                    key: snapshotData.documentId || 'unknown',
++                    value: JSON.stringify({
++                        timestamp: new Date().toISOString(),
++                        source: instanceId,
++                        ...snapshotData
++                    })
++                }
++            ]
++        });
++        console.log(`[${instanceId}] Published snapshot for doc ${snapshotData.documentId}`);
++    } catch (error) {
++        console.error(`[${instanceId}] Failed to publish snapshot:`, error);
++    }
++};
++
+ module.exports = {
+     connectProducer,
+-    publishDocumentEvent
++    publishDocumentEvent,
++    publishSnapshot
+ };
+-- 
+2.44.0.windows.1
+
