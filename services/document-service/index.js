@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const { createResponse, createErrorResponse, asyncHandler, generateId, serviceRequest, setupMetrics } = require('./shared-utils');
 const { prisma, prismaRead } = require('./shared-utils/prisma-client');
 const { validate, createDocumentSchema, updateDocumentSchema, addCollaboratorSchema } = require('./src/utils/validation');
-const { connectProducer, publishDocumentEvent } = require('./src/utils/kafka-producer');
+const { connectProducer, publishDocumentEvent, publishSnapshot } = require('./src/utils/kafka-producer');
 const { cache, invalidateCache } = require('./src/middleware/cache');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./src/config/swagger');
@@ -28,14 +28,10 @@ const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json(createErrorResponse('Access token required', 401));
-  }
+  if (!token) return res.status(401).json(createErrorResponse('Access token required', 401));
 
   jwt.verify(token, process.env.JWT_SECRET || 'default-secret-key', (err, user) => {
-    if (err) {
-      return res.status(403).json(createErrorResponse('Invalid or expired token', 403));
-    }
+    if (err) return res.status(403).json(createErrorResponse('Invalid or expired token', 403));
     req.user = user;
     next();
   });
@@ -46,61 +42,23 @@ app.get('/health', (req, res) => {
   res.json(createResponse(true, null, 'Document service is healthy'));
 });
 
-// Get all documents for authenticated user
-/**
- * @swagger
- * /documents:
- *   get:
- *     summary: Get all documents for the authenticated user
- *     tags: [Documents]
- *     responses:
- *       200:
- *         description: List of documents
- */
+// Get all documents
 app.get('/documents', authenticateToken, asyncHandler(async (req, res) => {
   const documents = await prismaRead.document.findMany({
     where: {
       OR: [
         { ownerId: req.user.userId },
-        {
-          collaborators: {
-            some: {
-              userId: req.user.userId
-            }
-          }
-        }
+        { collaborators: { some: { userId: req.user.userId } } }
       ]
     },
-    include: {
-      collaborators: true
-    },
-    orderBy: {
-      lastModified: 'desc'
-    }
+    include: { collaborators: true },
+    orderBy: { lastModified: 'desc' }
   });
 
   res.json(createResponse(true, documents, 'Documents retrieved successfully'));
 }));
 
-// Get specific document (with caching)
-/**
- * @swagger
- * /documents/{id}:
- *   get:
- *     summary: Get a specific document by ID
- *     tags: [Documents]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Document details
- *       404:
- *         description: Document not found
- */
+// Get specific document
 app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -109,49 +67,18 @@ app.get('/documents/:id', authenticateToken, cache, asyncHandler(async (req, res
       id,
       OR: [
         { ownerId: req.user.userId },
-        {
-          collaborators: {
-            some: {
-              userId: req.user.userId
-            }
-          }
-        }
+        { collaborators: { some: { userId: req.user.userId } } }
       ]
     },
-    include: {
-      collaborators: true
-    }
+    include: { collaborators: true }
   });
 
-  if (!document) {
-    return res.status(404).json(createErrorResponse('Document not found or access denied', 404));
-  }
+  if (!document) return res.status(404).json(createErrorResponse('Document not found or access denied', 404));
 
   res.json(createResponse(true, document, 'Document retrieved successfully'));
 }));
 
-// Create new document (with validation)
-/**
- * @swagger
- * /documents:
- *   post:
- *     summary: Create a new document
- *     tags: [Documents]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               title:
- *                 type: string
- *               content:
- *                 type: object
- *     responses:
- *       201:
- *         description: Document created successfully
- */
+// Create document
 app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncHandler(async (req, res) => {
   const { title, content } = req.body;
   const docId = generateId();
@@ -163,12 +90,9 @@ app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncH
       data: content || {},
       ownerId: req.user.userId
     },
-    include: {
-      collaborators: true
-    }
+    include: { collaborators: true }
   });
 
-  // Publish event
   await publishDocumentEvent('DOCUMENT_CREATED', {
     documentId: docId,
     userId: req.user.userId,
@@ -178,63 +102,23 @@ app.post('/documents', authenticateToken, validate(createDocumentSchema), asyncH
   res.status(201).json(createResponse(true, document, 'Document created successfully'));
 }));
 
-// Update document (with validation)
-/**
- * @swagger
- * /documents/{id}:
- *   put:
- *     summary: Update a document
- *     tags: [Documents]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               title:
- *                 type: string
- *               data:
- *                 type: object
- *     responses:
- *       200:
- *         description: Document updated successfully
- *       404:
- *         description: Document not found
- */
+// Update document with snapshot publishing
 app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { title, data } = req.body;
 
-  // Check if document exists and user has access
   const existingDocument = await prismaRead.document.findFirst({
     where: {
       id,
       OR: [
         { ownerId: req.user.userId },
-        {
-          collaborators: {
-            some: {
-              userId: req.user.userId,
-              role: { in: ['editor', 'owner'] }
-            }
-          }
-        }
+        { collaborators: { some: { userId: req.user.userId, role: { in: ['editor', 'owner'] } } } }
       ]
     }
   });
 
-  if (!existingDocument) {
-    return res.status(404).json(createErrorResponse('Document not found or access denied', 404));
-  }
+  if (!existingDocument) return res.status(404).json(createErrorResponse('Document not found or access denied', 404));
 
-  // Update document
   const updatedDocument = await prisma.document.update({
     where: { id },
     data: {
@@ -242,448 +126,132 @@ app.put('/documents/:id', authenticateToken, validate(updateDocumentSchema), asy
       data: data !== undefined ? data : existingDocument.data,
       lastModified: new Date()
     },
-    include: {
-      collaborators: true
-    }
+    include: { collaborators: true }
   });
 
-  // Invalidate cache
   await invalidateCache(id);
 
-  // Publish event
   await publishDocumentEvent('DOCUMENT_UPDATED', {
     documentId: id,
     userId: req.user.userId,
     updates: { title: !!title, data: !!data }
   });
 
+  // Publish snapshot
+  if (data) {
+    await publishSnapshot({
+      documentId: id,
+      version: updatedDocument.version,
+      data: updatedDocument.data,
+      userId: req.user.userId
+    });
+  }
+
   res.json(createResponse(true, updatedDocument, 'Document updated successfully'));
 }));
-/**
- * @swagger
- * /documents/{id}:
- *   put:
- *     summary: Update a document
- *     tags: [Documents]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               title:
- *                 type: string
- *               data:
- *                 type: object
- *     responses:
- *       200:
- *         description: Document updated successfully
- *       404:
- *         description: Document not found
- */
 
 // Delete document
-/**
- * @swagger
- * /documents/{id}:
- *   delete:
- *     summary: Delete a document
- *     tags: [Documents]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Document deleted successfully
- *       404:
- *         description: Document not found
- */
 app.delete('/documents/:id', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  // Check if document exists and user is owner
-  const existingDocument = await prismaRead.document.findFirst({
-    where: {
-      id,
-      ownerId: req.user.userId
-    }
-  });
+  const existingDocument = await prismaRead.document.findFirst({ where: { id, ownerId: req.user.userId } });
+  if (!existingDocument) return res.status(404).json(createErrorResponse('Document not found or not authorized to delete', 404));
 
-  if (!existingDocument) {
-    return res.status(404).json(createErrorResponse('Document not found or not authorized to delete', 404));
-  }
-
-  // Delete document (cascade will delete collaborators)
-  await prisma.document.delete({
-    where: { id }
-  });
-
-  // Invalidate cache
+  await prisma.document.delete({ where: { id } });
   await invalidateCache(id);
 
-  // Publish event
-  await publishDocumentEvent('DOCUMENT_DELETED', {
-    documentId: id,
-    userId: req.user.userId
-  });
+  await publishDocumentEvent('DOCUMENT_DELETED', { documentId: id, userId: req.user.userId });
 
   res.json(createResponse(true, null, 'Document deleted successfully'));
 }));
 
-// Add collaborator to document (with validation)
-/**
- * @swagger
- * /documents/{id}/collaborators:
- *   post:
- *     summary: Add a collaborator to a document
- *     tags: [Collaborators]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - userId
- *               - role
- *             properties:
- *               userId:
- *                 type: integer
- *               role:
- *                 type: string
- *                 enum: [viewer, editor]
- *     responses:
- *       201:
- *         description: Collaborator added successfully
- *       404:
- *         description: Document not found
- *       409:
- *         description: User is already a collaborator
- */
+// Add collaborator
 app.post('/documents/:id/collaborators', authenticateToken, validate(addCollaboratorSchema), asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { userId, role } = req.body;
 
-  // Check if document exists and user is owner
-  const document = await prismaRead.document.findFirst({
-    where: {
-      id,
-      ownerId: req.user.userId
-    }
-  });
+  const document = await prismaRead.document.findFirst({ where: { id, ownerId: req.user.userId } });
+  if (!document) return res.status(404).json(createErrorResponse('Document not found or not authorized', 404));
 
-  if (!document) {
-    return res.status(404).json(createErrorResponse('Document not found or not authorized', 404));
-  }
+  try { const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://localhost:3001'; await serviceRequest(`${authServiceUrl}/health`); } catch (error) { console.error('Auth service error:', error); return res.status(500).json(createErrorResponse('Unable to validate user', 500)); }
 
-  // Validate that the user to be added exists (service-to-service call)
-  try {
-    const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
-    await serviceRequest(`${authServiceUrl}/health`);
+  const existingCollaborator = await prismaRead.collaborator.findUnique({ where: { documentId_userId: { documentId: id, userId: parseInt(userId) } } });
+  if (existingCollaborator) return res.status(409).json(createErrorResponse('User is already a collaborator', 409));
 
-  } catch (error) {
-    console.error('Auth service communication error:', error);
-    return res.status(500).json(createErrorResponse('Unable to validate user', 500));
-  }
-
-  const existingCollaborator = await prismaRead.collaborator.findUnique({
-    where: {
-      documentId_userId: {
-        documentId: id,
-        userId: parseInt(userId)
-      }
-    }
-  });
-
-  if (existingCollaborator) {
-    return res.status(409).json(createErrorResponse('User is already a collaborator', 409));
-  }
-
-  // Add collaborator
-  const collaborator = await prisma.collaborator.create({
-    data: {
-      documentId: id,
-      userId: parseInt(userId),
-      role
-    }
-  });
-
+  const collaborator = await prisma.collaborator.create({ data: { documentId: id, userId: parseInt(userId), role } });
   await invalidateCache(id);
 
-  await publishDocumentEvent('COLLABORATOR_ADDED', {
-    documentId: id,
-    addedBy: req.user.userId,
-    addedUser: userId,
-    role
-  });
+  await publishDocumentEvent('COLLABORATOR_ADDED', { documentId: id, addedBy: req.user.userId, addedUser: userId, role });
 
   res.status(201).json(createResponse(true, collaborator, 'Collaborator added successfully'));
 }));
-/**
- * @swagger
- * /documents/{id}/collaborators:
- *   post:
- *     summary: Add a collaborator to a document
- *     tags: [Collaborators]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - userId
- *             properties:
- *               userId:
- *                 type: integer
- *               role:
- *                 type: string
- *                 enum: [viewer, editor]
- *     responses:
- *       201:
- *         description: Collaborator added successfully
- *       404:
- *         description: Document not found
- *       409:
- *         description: User is already a collaborator
- */
 
-/**
- * @swagger
- * /documents/{id}/collaborators/{userId}:
- *   delete:
- *     summary: Remove a collaborator from a document
- *     tags: [Collaborators]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *       - in: path
- *         name: userId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Collaborator removed successfully
- *       404:
- *         description: Document not found
- */
+// Remove collaborator
 app.delete('/documents/:id/collaborators/:userId', authenticateToken, asyncHandler(async (req, res) => {
   const { id, userId } = req.params;
+  const document = await prismaRead.document.findFirst({ where: { id, ownerId: req.user.userId } });
+  if (!document) return res.status(404).json(createErrorResponse('Document not found or not authorized', 404));
 
-  // Check if document exists and user is owner
-  const document = await prismaRead.document.findFirst({
-    where: {
-      id,
-      ownerId: req.user.userId
-    }
-  });
-
-  if (!document) {
-    return res.status(404).json(createErrorResponse('Document not found or not authorized', 404));
-  }
-
-  // Remove collaborator
-  await prisma.collaborator.delete({
-    where: {
-      documentId_userId: {
-        documentId: id,
-        userId: parseInt(userId)
-      }
-    }
-  });
-
-  // Invalidate cache
+  await prisma.collaborator.delete({ where: { documentId_userId: { documentId: id, userId: parseInt(userId) } } });
   await invalidateCache(id);
 
-  // Publish event
-  await publishDocumentEvent('COLLABORATOR_REMOVED', {
-    documentId: id,
-    removedBy: req.user.userId,
-    removedUser: userId
-  });
+  await publishDocumentEvent('COLLABORATOR_REMOVED', { documentId: id, removedBy: req.user.userId, removedUser: userId });
 
   res.json(createResponse(true, null, 'Collaborator removed successfully'));
 }));
-/**
- * @swagger
- * /documents/{id}/collaborators/{userId}:
- *   delete:
- *     summary: Remove a collaborator from a document
- *     tags: [Collaborators]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *       - in: path
- *         name: userId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Collaborator removed successfully
- *       404:
- *         description: Document not found
- */
 
-// List Snapshots (Proxy to Storage Service)
-/**
- * @swagger
- * /documents/{id}/snapshots:
- *   get:
- *     summary: List available snapshots/versions for a document
- *     tags: [Documents]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: List of snapshots
- */
+// List snapshots
 app.get('/documents/:id/snapshots', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const storageServiceUrl = process.env.STORAGE_SERVICE_URL || 'http://localhost:3006';
 
   try {
     const response = await serviceRequest(`${storageServiceUrl}/documents/${id}/snapshots`);
-    res.json(createResponse(true, response.snapshots, 'Snapshots retrieved successfully'));
+    const data = await response.json();
+    res.json(createResponse(true, data.snapshots, 'Snapshots retrieved successfully'));
   } catch (error) {
     console.error('Error fetching snapshots:', error);
     res.status(500).json(createErrorResponse('Failed to fetch snapshots', 500));
   }
 }));
 
-// Revert Document to Snapshot
-/**
- * @swagger
- * /documents/{id}/revert:
- *   post:
- *     summary: Revert document to a specific snapshot
- *     tags: [Documents]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - snapshotKey
- *             properties:
- *               snapshotKey:
- *                 type: string
- *     responses:
- *       200:
- *         description: Document reverted successfully
- */
+// Revert document to snapshot
 app.post('/documents/:id/revert', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { snapshotKey } = req.body;
+  if (!snapshotKey) return res.status(400).json(createErrorResponse('Snapshot key is required', 400));
 
-  if (!snapshotKey) {
-    return res.status(400).json(createErrorResponse('Snapshot key is required', 400));
-  }
-
-  // Check permissions
   const existingDocument = await prismaRead.document.findFirst({
     where: {
       id,
       OR: [
         { ownerId: req.user.userId },
-        {
-          collaborators: {
-            some: {
-              userId: req.user.userId,
-              role: 'editor'
-            }
-          }
-        }
+        { collaborators: { some: { userId: req.user.userId, role: 'editor' } } }
       ]
     }
   });
 
-  if (!existingDocument) {
-    return res.status(404).json(createErrorResponse('Document not found or access denied', 404));
-  }
+  if (!existingDocument) return res.status(404).json(createErrorResponse('Document not found or access denied', 404));
 
-  // Fetch snapshot content from Storage Service
   const storageServiceUrl = process.env.STORAGE_SERVICE_URL || 'http://localhost:3006';
   let snapshotData;
-
   try {
-    // Use the internal endpoint to get JSON content directly
-    // Encode the key because it contains slashes
-    const encodedKey = encodeURIComponent(snapshotKey);
-    // Note: serviceRequest helper might not support encoded path params well if it expects simple URL.
-    // Let's construct URL carefully.
-    // If snapshotKey is "snapshots/123/v1.json", we want "/internal/snapshots/snapshots%2F123%2Fv1.json"
-    // But express routing with (*) might handle unencoded slashes too depending on client.
-    // Safest is to pass it as is if the service expects path param with wildcards.
-    // However, fetch/axios might normalize.
-    // Let's try sending it as a query param or just raw path.
-    // The storage service defined: app.get('/internal/snapshots/:key(*)'
-
-    snapshotData = await serviceRequest(`${storageServiceUrl}/internal/snapshots/${snapshotKey}`);
+    const response = await serviceRequest(`${storageServiceUrl}/internal/snapshots/${snapshotKey}`);
+    snapshotData = await response.json();
   } catch (error) {
     console.error('Error fetching snapshot content:', error);
     return res.status(500).json(createErrorResponse('Failed to retrieve snapshot content', 500));
   }
 
-  if (!snapshotData || !snapshotData.data) {
-    return res.status(400).json(createErrorResponse('Invalid snapshot data', 400));
-  }
+  if (!snapshotData || !snapshotData.data) return res.status(400).json(createErrorResponse('Invalid snapshot data', 400));
 
-  // Update document with snapshot content
   const updatedDocument = await prisma.document.update({
     where: { id },
-    data: {
-      data: snapshotData.data,
-      lastModified: new Date()
-      // We do NOT decrement version. Revert is a forward-moving action.
-      // The reconciliation service will see this update and increment the version.
-    }
+    data: { data: snapshotData.data, lastModified: new Date() }
   });
 
-  // Invalidate cache
   await invalidateCache(id);
 
-  // Publish event
   await publishDocumentEvent('DOCUMENT_UPDATED', {
     documentId: id,
     userId: req.user.userId,
@@ -697,10 +265,7 @@ app.post('/documents/:id/revert', authenticateToken, asyncHandler(async (req, re
 app.listen(PORT, async () => {
   try {
     console.log(`Document service running on port ${PORT}`);
-
-    // Connect Kafka producer
     await connectProducer();
-
   } catch (error) {
     console.error('Failed to start service:', error);
     process.exit(1);

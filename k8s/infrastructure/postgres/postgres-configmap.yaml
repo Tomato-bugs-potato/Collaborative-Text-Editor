@@ -15,6 +15,8 @@ data:
 
     # Replication
     wal_level = replica
+    synchronous_commit = on
+    synchronous_standby_names = 'ANY 1 (postgres-replica-1, postgres-replica-2)'
     max_wal_senders = 10
     max_replication_slots = 10
     wal_keep_size = 64MB
@@ -194,6 +196,9 @@ data:
         
         # Ensure standby.signal exists (for PostgreSQL 12+)
         touch /var/lib/postgresql/data/standby.signal
+        
+        # Inject application_name into postgresql.auto.conf for synchronous replication
+        echo "primary_conninfo = 'user=replicator password=replicator_password host=$POSTGRES_MASTER_HOST port=5432 sslmode=prefer sslcompression=0 gssencmode=prefer krbsrvname=postgres target_session_attrs=any application_name=$HOSTNAME'" >> /var/lib/postgresql/data/postgresql.auto.conf
         
         # Set proper permissions
         chown -R postgres:postgres /var/lib/postgresql/data
