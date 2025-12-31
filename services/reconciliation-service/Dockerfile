@@ -26,4 +26,4 @@ COPY ./reconciliation-service/ .
 
 EXPOSE 3004
 
-CMD ["npm", "start"]
+CMD ["sh", "-c", "npx prisma generate && npm start"]

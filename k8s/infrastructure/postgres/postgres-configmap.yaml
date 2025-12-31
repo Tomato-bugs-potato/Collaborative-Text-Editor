@@ -10,22 +10,19 @@ data:
     listen_addresses = '*'
     max_connections = 500
 
-    # HBA Configuration file path
-    hba_file = '/etc/postgresql/pg_hba.conf'
+
 
     # Replication
     wal_level = replica
-    synchronous_commit = on
-    synchronous_standby_names = 'ANY 1 (postgres-replica-1, postgres-replica-2)'
+    # synchronous_commit = on
+    # synchronous_standby_names = 'ANY 1 (postgres-replica-0, postgres-replica-1)'
     max_wal_senders = 10
     max_replication_slots = 10
     wal_keep_size = 64MB
     hot_standby = on
 
     # Logging
-    logging_collector = on
-    log_directory = 'log'
-    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    logging_collector = off
     log_statement = 'mod'
     log_replication_commands = on
 

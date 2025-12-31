@@ -13,14 +13,46 @@ spec:
             - "sh"
             - "-c"
             - |
-              echo "Waiting for Redis nodes to be ready..."
-              sleep 10
-              echo "yes" | redis-cli --cluster create \
-                redis-cluster-0.redis-cluster:6379 \
-                redis-cluster-1.redis-cluster:6379 \
-                redis-cluster-2.redis-cluster:6379 \
-                redis-cluster-3.redis-cluster:6379 \
-                redis-cluster-4.redis-cluster:6379 \
-                redis-cluster-5.redis-cluster:6379 \
-                --cluster-replicas 1
+              echo "Waiting for all Redis nodes to be ready..."
+              NODES="redis-cluster-0.redis-cluster:6379 redis-cluster-1.redis-cluster:6379 redis-cluster-2.redis-cluster:6379 redis-cluster-3.redis-cluster:6379 redis-cluster-4.redis-cluster:6379 redis-cluster-5.redis-cluster:6379"
+              
+              for node in $NODES; do
+                host=$(echo $node | cut -d: -f1)
+                while ! redis-cli -h $host -p 6379 ping; do
+                  echo "Waiting for $host..."
+                  sleep 2
+                done
+              done
+
+              echo "All nodes ready. Checking cluster status..."
+              # Try to check status, but handle cases where the node might be unreachable due to stale IP config
+              CLUSTER_STATUS=$(redis-cli --cluster check redis-cluster-0.redis-cluster:6379 2>&1)
+              EXIT_CODE=$?
+              
+              if [ $EXIT_CODE -eq 0 ] && echo "$CLUSTER_STATUS" | grep -q "All 16384 slots covered"; then
+                echo "Cluster is already healthy. Nothing to do."
+                exit 0
+              fi
+
+              echo "Cluster is not healthy, unreachable, or not created. Attempting recovery..."
+              
+              # If we can't even check the cluster or it's broken, we should reset nodes to clear stale IP configs
+              echo "Performing CLUSTER RESET HARD on all nodes to clear stale configurations..."
+              for node in $NODES; do
+                host=$(echo $node | cut -d: -f1)
+                redis-cli -h $host -p 6379 CLUSTER RESET HARD
+              done
+
+              echo "Creating new cluster..."
+              # We use --cluster-yes to avoid the "yes" pipe if possible, but some versions need it
+              echo "yes" | redis-cli --cluster create $NODES --cluster-replicas 1
+
+              # Final check
+              sleep 5
+              if redis-cli --cluster check redis-cluster-0.redis-cluster:6379 | grep -q "All 16384 slots covered"; then
+                echo "Cluster successfully initialized."
+              else
+                echo "Cluster still has issues. Manual intervention may be required."
+                exit 1
+              fi
       restartPolicy: OnFailure

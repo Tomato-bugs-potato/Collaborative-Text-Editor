@@ -468,6 +468,12 @@ app.post('/logout', authenticateToken, asyncHandler(async (req, res) => {
   res.json(createResponse(true, null, 'Logged out successfully'));
 }));
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled Error:', err);
+  res.status(500).json(createErrorResponse(err.message || 'Internal Server Error', 500));
+});
+
 // Start Server
 app.listen(PORT, async () => {
   try {

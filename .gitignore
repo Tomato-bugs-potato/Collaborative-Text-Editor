@@ -111,7 +111,7 @@ logs
 .env.production.local
 
 # Docker
-.dockerignore
+
 
 # Testing
 coverage/
