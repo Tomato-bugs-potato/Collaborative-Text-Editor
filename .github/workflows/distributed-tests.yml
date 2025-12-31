@@ -14,10 +14,10 @@ jobs:
     name: Load Distribution Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
       
@@ -35,7 +35,7 @@ jobs:
           NUM_USERS: 30
       
       - name: Upload Load Test Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: load-test-results
           path: test/results/load-test-*.json
@@ -45,15 +45,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: load-test
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
       
       - name: Setup kubectl
-        uses: azure/setup-kubectl@v3
+        uses: azure/setup-kubectl@v4
       
       - name: Configure Kubernetes
         run: |
@@ -71,7 +71,7 @@ jobs:
           npm run test:failover
       
       - name: Upload Failover Test Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: failover-test-results
           path: test/results/failover-test-*.json
@@ -81,10 +81,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: load-test
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
       
@@ -101,7 +101,7 @@ jobs:
           API_GATEWAY: ${{ secrets.API_GATEWAY_URL }}
       
       - name: Upload E2E Test Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: e2e-test-results
           path: test/results/e2e-test-*.json
@@ -111,10 +111,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [load-test, failover-test, e2e-test]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
       
       - name: Generate Summary Report
         run: |
@@ -130,7 +130,7 @@ jobs:
           cat e2e-test-results/* >> test-report.md || echo "No results" >> test-report.md
       
       - name: Upload Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: test-report
           path: test-report.md
