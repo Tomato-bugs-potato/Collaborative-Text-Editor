@@ -49,7 +49,8 @@ spec:
             - name: config
               mountPath: /usr/local/bin/check-dbs-ready.sh
               subPath: master-check-dbs-ready.sh
-          args: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "max_connections=500"]
+          command: ["docker-entrypoint.sh"]
+          args: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
           readinessProbe:
             exec:
               command: ["/bin/bash", "-c", "/usr/local/bin/check-dbs-ready.sh"]

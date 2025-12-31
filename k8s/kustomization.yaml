@@ -27,6 +27,7 @@ resources:
   - services/reconciliation-service-docs.yaml
   - services/reconciliation-service-collab.yaml
   - services/failover-service.yaml
+  - services/testing-dashboard.yaml
 
   # Frontend
   - frontend/client.yaml

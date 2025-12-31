@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: reconciliation-service
-          image: reconciliation-service:latest
+          image: reconciliation-service:v4
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

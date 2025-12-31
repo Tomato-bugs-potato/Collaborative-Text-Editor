@@ -11,7 +11,7 @@ const express = require('express');
 const { Kafka } = require('kafkajs');
 const ot = require('ot-text');
 const { prisma, prismaRead } = require('./shared-utils/prisma-client');
-const { prisma, prismaRead } = require('./shared-utils/prisma-client');
+
 const { setupMetrics, kafkaMessagesTotal } = require('./shared-utils');
 const Redis = require('ioredis');
 
@@ -51,6 +51,10 @@ const DLQ_TOPIC = process.env.DLQ_TOPIC || 'reconciliation-dlq';
 // Metrics
 setupMetrics(app, 'reconciliation-service', instanceId);
 
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', service: 'reconciliation-service', instance: instanceId });
+});
+
 // In-memory buffer for document operations (for performance)
 const operationBuffers = new Map();
 
@@ -75,30 +79,42 @@ function getDocumentBuffer(documentId, initialContent = '', initialVersion = 0) 
  */
 async function flushBuffers() {
   const now = Date.now();
-  for (const [documentId, buffer] of operationBuffers.entries()) {
-    if (buffer.isDirty) {
-      try {
-        console.log(`[${instanceId}] Flushing document ${documentId} to database (version ${buffer.serverVersion})`);
 
-        // 1. Update PostgreSQL
-        await prisma.document.update({
+  for (const [documentId, buffer] of operationBuffers.entries()) {
+    if (!buffer.isDirty) continue;
+
+    try {
+      // Save snapshot to database
+      await prisma.document.update({
+        where: { id: documentId },
+        data: {
+          data: buffer.currentContent,
+          version: buffer.serverVersion,
+          lastModified: new Date()
+        }
+      });
+
+      // Publish snapshot to Kafka
+      await producer.send({
+        topic: 'document-snapshots',
+        messages: [{
+          key: documentId,
           value: JSON.stringify({
             documentId,
-            data: buffer.currentContent,
+            content: buffer.currentContent,
             version: buffer.serverVersion,
             timestamp: new Date().toISOString()
           })
         }]
-        });
-      console.log(`[${instanceId}] Snapshot published to Kafka topic 'document-snapshots' for doc ${documentId}`);
+      });
 
       buffer.isDirty = false;
-      buffer.lastModified = now;
+      console.log(`[${instanceId}] Flushed buffer for doc ${documentId} to DB (v${buffer.serverVersion})`);
+
     } catch (error) {
       console.error(`[${instanceId}] Error flushing document ${documentId}:`, error);
     }
   }
-}
 }
 
 // Flush every 2 seconds

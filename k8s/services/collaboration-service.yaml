@@ -41,7 +41,7 @@ spec:
               value: "postgresql://editor:$(DB_PASSWORD)@postgres-master:5432/texteditor_collab"
       containers:
         - name: collaboration-service
-          image: collaboration-service:latest
+          image: collaboration-service:v2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3003

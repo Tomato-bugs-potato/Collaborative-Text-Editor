@@ -46,7 +46,7 @@ describe('End-to-End Workflow Test', () => {
         // Step 4: Real-time Collaboration
         console.log(chalk.yellow('\nStep 4: Real-time Collaboration'));
         const socket = await new Promise((resolve, reject) => {
-            const s = io(`${API_GATEWAY}/collab`, {
+            const s = io(`${API_GATEWAY}`, {
                 auth: { token: authToken },
                 transports: ['websocket']
             });

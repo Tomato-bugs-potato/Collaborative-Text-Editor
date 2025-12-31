@@ -1,6 +1,7 @@
 const io = require('socket.io-client');
 const chalk = require('chalk');
 const ora = require('ora');
+const jwt = require('jsonwebtoken');
 
 const API_GATEWAY = process.env.API_GATEWAY || 'http://localhost:8080';
 const NUM_USERS = parseInt(process.env.NUM_USERS) || 50;
@@ -18,7 +19,7 @@ class UserSimulator {
 
     async connect() {
         return new Promise((resolve, reject) => {
-            this.socket = io(`${API_GATEWAY}/collab`, {
+            this.socket = io(`${API_GATEWAY}`, {
                 auth: { token: this.token },
                 transports: ['websocket']
             });
@@ -68,8 +69,13 @@ class UserSimulator {
 }
 
 async function authenticate(userId) {
-    // Mock authentication - in real scenario, call auth service
-    return `mock-token-${userId}`;
+    // Generate valid JWT token
+    const payload = {
+        userId: `user-${userId}`,
+        email: `user${userId}@example.com`,
+        name: `Load Test User ${userId}`
+    };
+    return jwt.sign(payload, process.env.JWT_SECRET || 'your-super-secret-jwt-key', { expiresIn: '1h' });
 }
 
 async function runLoadTest() {
