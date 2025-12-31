@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testing-dashboard
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testing-dashboard
+  template:
+    metadata:
+      labels:
+        app: testing-dashboard
+    spec:
+      serviceAccountName: testing-dashboard-sa
+      containers:
+        - name: testing-dashboard
+          image: testing-dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3100
+          env:
+            - name: PORT
+              value: "3100"
+            - name: NAMESPACE
+              value: "default"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3100
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testing-dashboard
+  namespace: default
+spec:
+  type: NodePort
+  ports:
+    - port: 3100
+      targetPort: 3100
+      nodePort: 30100
+  selector:
+    app: testing-dashboard
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: testing-dashboard-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: testing-dashboard-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: testing-dashboard-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: testing-dashboard-role
+subjects:
+  - kind: ServiceAccount
+    name: testing-dashboard-sa
+    namespace: default
