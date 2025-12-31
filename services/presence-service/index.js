@@ -50,7 +50,52 @@ app.get('/health', (req, res) => {
     res.json({ status: 'healthy', service: 'presence-service', instance: INSTANCE_ID });
 });
 
+
 // Update presence (heartbeat + cursor)
+/**
+ * @swagger
+ * /presence/{documentId}/{userId}:
+ *   post:
+ *     summary: Update user presence and cursor position
+ *     tags: [Presence]
+ *     parameters:
+ *       - in: path
+ *         name: documentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Document ID
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: User ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               cursor:
+ *                 type: number
+ *                 description: Cursor position in document
+ *               selection:
+ *                 type: object
+ *                 description: Current text selection
+ *               name:
+ *                 type: string
+ *                 description: User display name
+ *               color:
+ *                 type: string
+ *                 description: User cursor color
+ *     responses:
+ *       200:
+ *         description: Presence updated successfully
+ *       500:
+ *         description: Internal server error
+ */
 app.post('/presence/:documentId/:userId', async (req, res) => {
     try {
         const { documentId, userId } = req.params;
@@ -83,7 +128,49 @@ app.post('/presence/:documentId/:userId', async (req, res) => {
     }
 });
 
+
 // Get active users for a document
+/**
+ * @swagger
+ * /presence/{documentId}:
+ *   get:
+ *     summary: Get active users and their presence for a document
+ *     tags: [Presence]
+ *     parameters:
+ *       - in: path
+ *         name: documentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Document ID
+ *     responses:
+ *       200:
+ *         description: List of active users with cursor positions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 users:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       userId:
+ *                         type: string
+ *                       name:
+ *                         type: string
+ *                       color:
+ *                         type: string
+ *                       cursor:
+ *                         type: number
+ *                       selection:
+ *                         type: object
+ *                       lastSeen:
+ *                         type: number
+ *       500:
+ *         description: Internal server error
+ */
 app.get('/presence/:documentId', async (req, res) => {
     try {
         const { documentId } = req.params;

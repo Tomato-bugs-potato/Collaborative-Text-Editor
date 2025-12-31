@@ -11,3 +11,4 @@ data:
     appendonly yes
     protected-mode no
     port 6379
+    cluster-preferred-endpoint-type hostname

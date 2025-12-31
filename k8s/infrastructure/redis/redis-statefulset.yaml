@@ -22,7 +22,10 @@ spec:
               name: client
             - containerPort: 16379
               name: gossip
-          command: ["redis-server", "/conf/redis.conf"]
+          command:
+            - "sh"
+            - "-c"
+            - "redis-server /conf/redis.conf --cluster-announce-hostname ${HOSTNAME}.redis-cluster.default.svc.cluster.local"
           env:
             - name: POD_IP
               valueFrom:
