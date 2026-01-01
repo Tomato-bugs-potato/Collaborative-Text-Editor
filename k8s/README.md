@@ -62,8 +62,90 @@ Access the application:
     kubectl get svc nginx-lb
     ```
 
+
+## Rebuilding Infrastructure
+
+> **🔄 Fully Automatic**: The infrastructure is now self-healing. After a rebuild, just wait 2-3 minutes - Kafka and Redis will automatically fix any initialization issues without manual intervention!
+
+If you need to rebuild the infrastructure (due to crashes, misconfigurations, or cluster ID mismatches), use the provided cleanup scripts:
+
+### Quick Rebuild
+
+Use the unified rebuild script for a complete infrastructure reset:
+
+```bash
+./scripts/rebuild-infrastructure.sh
+```
+
+This script will:
+1. Clean Kafka metadata (fixing Cluster ID mismatches)
+2. Reset Redis cluster (clearing stale IP configurations)
+3. Reapply all infrastructure manifests
+4. Wait for all pods to be ready
+
+**Options:**
+- `--skip-kafka`: Skip Kafka cleanup
+- `--skip-redis`: Skip Redis cleanup
+- `--force` or `-f`: Skip confirmation prompt
+
+### Individual Component Cleanup
+
+**Kafka Cleanup** (fixes Cluster ID mismatches):
+```bash
+./scripts/cleanup-kafka.sh
+```
+
+**Redis Cleanup** (fixes stale node configurations):
+```bash
+./scripts/cleanup-redis.sh
+```
+
+## Troubleshooting
+
+### Kafka: Cluster ID Mismatch
+
+**Symptoms:**
+- Kafka pod in `CrashLoopBackOff`
+- Error: "The Cluster ID doesn't match stored clusterId"
+- Reconciliation services showing `ECONNREFUSED` to Kafka
+
+**Solution:**
+```bash
+./scripts/cleanup-kafka.sh
+kubectl apply -f k8s/infrastructure/kafka/kafka.yaml
+```
+
+### Redis: Stale IP Addresses
+
+**Symptoms:**
+- Redis init job failing
+- Error: "Host is unreachable" in cluster check
+- Nodes showing as "disconnected" in `nodes.conf`
+
+**Solution:**
+```bash
+./scripts/cleanup-redis.sh
+```
+
+The robust initialization job will automatically detect and fix stale configurations.
+
+### General Pod Issues
+
+**Check pod status:**
+```bash
+kubectl get pods
+kubectl describe pod <pod-name>
+kubectl logs <pod-name>
+```
+
+**Common fixes:**
+1. Delete the pod and let it recreate: `kubectl delete pod <pod-name>`
+2. Restart a deployment: `kubectl rollout restart deployment <deployment-name>`
+3. Check events: `kubectl get events --sort-by='.lastTimestamp'`
+
 ## Notes
 
 -   **Persistence**: The manifests use `PersistentVolumeClaims`. Ensure your cluster supports dynamic provisioning.
 -   **Secrets**: Secrets are currently stored in `services/secrets.yaml`. **Do not commit this file to a public repository.**
--   **Redis Initialization**: A Job `redis-cluster-init` runs automatically to set up the Redis cluster.
+-   **Redis Initialization**: A Job `redis-cluster-init` runs automatically to set up the Redis cluster with robust error handling.
+-   **Kafka Resilience**: The Kafka manifest includes init containers to detect and prevent cluster ID mismatches.

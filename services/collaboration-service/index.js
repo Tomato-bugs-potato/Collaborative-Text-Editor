@@ -36,23 +36,60 @@ function createRedisClusterClient(name) {
     return { host, port: parseInt(port) || 6379 };
   });
 
+  console.log(`[${INSTANCE_ID}] Creating Redis Cluster client for ${name}:`, clusterNodes.map(n => `${n.host}:${n.port}`).join(', '));
+
   const client = new Redis.Cluster(clusterNodes, {
     redisOptions: {
-      password: undefined, // Set if Redis requires auth
+      password: undefined,
+      connectTimeout: 10000,
+      enableReadyCheck: false, // Disable strict ready check for better compatibility
     },
-    scaleReads: 'slave',
-    enableReadyCheck: true,
+    scaleReads: 'all', // Changed from 'slave' to avoid issues if replicas aren't ready
+    enableReadyCheck: false,
     maxRedirections: 16,
     retryDelayOnFailover: 100,
-    retryDelayOnClusterDown: 100,
-    clusterRetryStrategy: (times) => Math.min(times * 100, 3000)
+    retryDelayOnClusterDown: 300,
+    clusterRetryStrategy: (times) => {
+      const delay = Math.min(times * 100, 3000);
+      console.log(`[${INSTANCE_ID}] Redis ${name} retry attempt ${times}, delay: ${delay}ms`);
+      return delay;
+    },
+    // Add these for better stability
+    slotsRefreshTimeout: 5000,
+    enableOfflineQueue: true,
+    lazyConnect: false, // Ensure it connects immediately
   });
 
-  client.on('error', (err) => console.error(`[${INSTANCE_ID}] Redis Cluster ${name} error:`, err.message));
-  client.on('ready', () => console.log(`[${INSTANCE_ID}] Redis Cluster ${name} ready`));
-  client.on('connect', () => console.log(`[${INSTANCE_ID}] Redis Cluster ${name} connected`));
-  client.on('+node', (node) => console.log(`[${INSTANCE_ID}] Redis node added:`, node.options?.host));
-  client.on('-node', (node) => console.log(`[${INSTANCE_ID}] Redis node removed:`, node.options?.host));
+  // Enhanced event logging
+  client.on('error', (err) => {
+    console.error(`[${INSTANCE_ID}] ❌ Redis Cluster ${name} error:`, err.message);
+    console.error(`[${INSTANCE_ID}] Error stack:`, err.stack);
+  });
+
+  client.on('ready', () => {
+    console.log(`[${INSTANCE_ID}] ✅ Redis Cluster ${name} READY`);
+    console.log(`[${INSTANCE_ID}] Redis ${name} status:`, client.status);
+  });
+
+  client.on('connect', () => {
+    console.log(`[${INSTANCE_ID}] 🔌 Redis Cluster ${name} CONNECTED`);
+  });
+
+  client.on('reconnecting', (delay) => {
+    console.log(`[${INSTANCE_ID}] 🔄 Redis Cluster ${name} reconnecting in ${delay}ms`);
+  });
+
+  client.on('close', () => {
+    console.log(`[${INSTANCE_ID}] 🚪 Redis Cluster ${name} connection CLOSED`);
+  });
+
+  client.on('+node', (node) => {
+    console.log(`[${INSTANCE_ID}] ➕ Redis node added:`, node.options?.host);
+  });
+
+  client.on('-node', (node) => {
+    console.log(`[${INSTANCE_ID}] ➖ Redis node removed:`, node.options?.host);
+  });
 
   return client;
 }
@@ -173,27 +210,33 @@ const io = new Server({
 
 // Connect Redis adapter with retry logic
 async function connectRedisAdapter() {
-  const maxRetries = 10;
+  const maxRetries = 15;
   let retries = 0;
 
   // Helper to wait for ioredis cluster to be ready
   const waitForReady = (client, name) => {
     return new Promise((resolve, reject) => {
+      console.log(`[${INSTANCE_ID}] Waiting for ${name} to be ready, current status: ${client.status}`);
+
       if (client.status === 'ready') {
+        console.log(`[${INSTANCE_ID}] ${name} already ready!`);
         resolve();
         return;
       }
 
       const timeout = setTimeout(() => {
+        console.error(`[${INSTANCE_ID}] ${name} connection timeout after 10s, status: ${client.status}`);
         reject(new Error(`${name} connection timeout`));
-      }, 5000);
+      }, 10000); // Increased timeout
 
       client.once('ready', () => {
+        console.log(`[${INSTANCE_ID}] ${name} became ready!`);
         clearTimeout(timeout);
         resolve();
       });
 
       client.once('error', (err) => {
+        console.error(`[${INSTANCE_ID}] ${name} error during wait:`, err.message);
         clearTimeout(timeout);
         reject(err);
       });
@@ -202,30 +245,64 @@ async function connectRedisAdapter() {
 
   while (retries < maxRetries && !isRedisReady) {
     try {
-      console.log(`[${INSTANCE_ID}] Attempting to connect Redis Cluster adapter (attempt ${retries + 1}/${maxRetries})...`);
+      console.log(`[${INSTANCE_ID}] 
+========================================`);
+      console.log(`[${INSTANCE_ID}] Redis Adapter Connection Attempt ${retries + 1}/${maxRetries}`);
+      console.log(`[${INSTANCE_ID}] ========================================`);
+      console.log(`[${INSTANCE_ID}] PubClient status: ${pubClient.status}`);
+      console.log(`[${INSTANCE_ID}] SubClient status: ${subClient.status}`);
 
-      // Wait for both clients to be ready (ioredis auto-connects)
-      await Promise.all([
-        waitForReady(pubClient, 'pubClient'),
-        waitForReady(subClient, 'subClient')
-      ]);
+      // Test Redis connectivity first
+      try {
+        await pubClient.ping();
+        console.log(`[${INSTANCE_ID}] ✓ PubClient PING successful`);
+      } catch (err) {
+        console.error(`[${INSTANCE_ID}] ✗ PubClient PING failed:`, err.message);
+        throw err;
+      }
 
+      try {
+        await subClient.ping();
+        console.log(`[${INSTANCE_ID}] ✓ SubClient PING successful`);
+      } catch (err) {
+        console.error(`[${INSTANCE_ID}] ✗ SubClient PING failed:`, err.message);
+        throw err;
+      }
+
+      // Both clients can ping, now attach adapter
+      console.log(`[${INSTANCE_ID}] Creating Socket.IO Redis adapter...`);
       io.adapter(createAdapter(pubClient, subClient));
+
       isRedisReady = true;
-      console.log(`[${INSTANCE_ID}] ✓ Redis Cluster adapter connected successfully!`);
+      console.log(`[${INSTANCE_ID}] 
+========================================`);
+      console.log(`[${INSTANCE_ID}] ✅ SUCCESS: Redis Cluster adapter CONNECTED!`);
+      console.log(`[${INSTANCE_ID}] ✅ Cross-pod events will now work!`);
+      console.log(`[${INSTANCE_ID}] ========================================\n`);
       return true;
     } catch (err) {
       retries++;
-      console.error(`[${INSTANCE_ID}] Redis Cluster adapter connection failed (attempt ${retries}/${maxRetries}):`, err.message);
+      console.error(`[${INSTANCE_ID}] 
+========================================`);
+      console.error(`[${INSTANCE_ID}] ❌ Redis adapter connection FAILED (attempt ${retries}/${maxRetries})`);
+      console.error(`[${INSTANCE_ID}] Error: ${err.message}`);
+      console.error(`[${INSTANCE_ID}] ========================================\n`);
+
       if (retries < maxRetries) {
-        console.log(`[${INSTANCE_ID}] Retrying in 3 seconds...`);
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        const delay = Math.min(retries * 1000, 5000);
+        console.log(`[${INSTANCE_ID}] Retrying in ${delay}ms...\n`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
   }
 
   if (!isRedisReady) {
-    console.error(`[${INSTANCE_ID}] ✗ Failed to connect Redis adapter after ${maxRetries} attempts. Real-time sync will NOT work across instances!`);
+    console.error(`[${INSTANCE_ID}] 
+========================================`);
+    console.error(`[${INSTANCE_ID}] ❌❌❌ CRITICAL: Redis adapter FAILED after ${maxRetries} attempts`);
+    console.error(`[${INSTANCE_ID}] ❌❌❌ Real-time sync will NOT work across pods!`);
+    console.error(`[${INSTANCE_ID}] ❌❌❌ Users on different pods will NOT see each other's changes!`);
+    console.error(`[${INSTANCE_ID}] ========================================\n`);
   }
   return isRedisReady;
 }
@@ -305,6 +382,9 @@ io.on('connection', async (socket) => {
       }).catch(err => console.error(`[${INSTANCE_ID}] Failed to update presence:`, err));
 
       // Broadcast cursor position to others in the document
+      const socketsInRoom = await io.in(documentId).allSockets();
+      console.log(`[${INSTANCE_ID}] Broadcasting cursor update for user ${socket.userId} in doc ${documentId} to ${socketsInRoom.size - 1} other clients`);
+
       socket.to(documentId).emit('cursor-update', {
         userId: socket.userId,
         position,
@@ -331,6 +411,10 @@ io.on('connection', async (socket) => {
       });
 
       // Broadcast the operation to others in the document immediately
+      const socketsInRoom = await io.in(documentId).allSockets();
+      console.log(`[${INSTANCE_ID}] Broadcasting changes from user ${socket.userId} for doc ${documentId} (v${version}) to ${socketsInRoom.size - 1} other clients`);
+      console.log(`[${INSTANCE_ID}] Active sockets in room ${documentId}:`, Array.from(socketsInRoom));
+
       socket.to(documentId).emit('receive-changes', {
         operation,
         version,

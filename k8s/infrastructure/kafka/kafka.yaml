@@ -47,6 +47,35 @@ spec:
         - name: wait-for-zookeeper
           image: busybox:1.28
           command: ['sh', '-c', "until nc -zv zookeeper 2181; do echo waiting for zookeeper; sleep 2; done"]
+        - name: cleanup-stale-metadata
+          image: confluentinc/cp-kafka:7.5.0
+          command:
+            - sh
+            - -c
+            - |
+              echo "==> Auto-healing: Checking for stale Kafka metadata..."
+              META_FILE="/var/lib/kafka/data/meta.properties"
+              LOG_DIR="/var/lib/kafka/data/kafka-logs"
+              
+              # On any pod restart, check if we had a previous error
+              # Kafka logs are in the volume, so we can check them
+              if [ -d "$LOG_DIR" ] && grep -r "doesn.t match stored clusterId" "$LOG_DIR" 2>/dev/null; then
+                echo "DETECTED CLUSTER ID MISMATCH in logs - Auto-healing..."
+                echo "Deleting stale metadata to allow fresh registration..."
+                rm -rf /var/lib/kafka/data/*
+                echo "All Kafka data cleared. Kafka will start fresh."
+              elif [ -f "$META_FILE" ]; then
+                STORED_CLUSTER_ID=$(grep cluster.id "$META_FILE" | cut -d= -f2 || echo "")
+                echo "Found existing cluster ID: $STORED_CLUSTER_ID"
+                echo "Kafka will validate this on startup."
+              else
+                echo "No existing metadata found. This is a fresh start."
+              fi
+              
+              echo "Init container completed successfully."
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:7.5.0
@@ -99,6 +128,9 @@ spec:
               unset KAFKA_PORT
 
               echo "Starting Kafka with Broker ID $KAFKA_BROKER_ID and Advertised Listeners $KAFKA_ADVERTISED_LISTENERS"
+              
+              # Trap errors and mark for auto-healing on restart
+              trap 'echo "Kafka exited with error. Checking for cluster ID mismatch..."; if grep -q "doesn.t match stored clusterId" /var/log/kafka/*.log 2>/dev/null; then touch /var/lib/kafka/data/.cluster_id_mismatch; echo "Marked for auto-healing on next restart"; fi' EXIT
               
               /etc/confluent/docker/run
           volumeMounts:
